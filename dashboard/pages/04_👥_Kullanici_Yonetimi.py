@@ -24,18 +24,20 @@ if users_df.empty:
 
 # --- Istatistikler ---
 total = len(users_df)
-approved = len(users_df[users_df['approved'] == True])
-pending = len(users_df[users_df['approved'] == False])
+approved_active = len(users_df[(users_df['approved'] == True) & (users_df['active'] == True)])
+pending = len(users_df[(users_df['approved'] == False) & (users_df['active'] == True)])
+inactive = len(users_df[users_df['active'] == False])
 
-c1, c2, c3 = st.columns(3)
-c1.metric("Toplam Kullanıcı", total)
-c2.metric("Onaylı", approved, delta_color="normal")
-c3.metric("Bekleyen", pending, delta_color="inverse")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Toplam", total)
+c2.metric("Onaylı & Aktif", approved_active)
+c3.metric("Onay Bekliyor", pending, delta_color="inverse")
+c4.metric("Pasif", inactive)
 
 st.divider()
 
 # --- Onay Bekleyenler ---
-pending_df = users_df[users_df['approved'] == False]
+pending_df = users_df[(users_df['approved'] == False) & (users_df['active'] == True)]
 if not pending_df.empty:
     st.subheader("⏳ Onay Bekleyen Kullanıcılar")
 
@@ -58,11 +60,11 @@ if not pending_df.empty:
                         timeout=10,
                     )
                     if resp.status_code == 200:
-                        st.success(f"Onaylandı! Kullanıcıya Telegram mesajı gönderildi.")
+                        st.success("Onaylandı! Kullanıcıya bildirim gönderildi.")
                         get_telegram_users_df.clear()
                         st.rerun()
                     else:
-                        st.error(f"Hata: {resp.status_code} — {resp.text}")
+                        st.error(f"Hata: {resp.status_code}")
                 except Exception as e:
                     st.error(f"API hatası: {e}")
 
@@ -79,35 +81,78 @@ if not pending_df.empty:
                         get_telegram_users_df.clear()
                         st.rerun()
                     else:
-                        st.error(f"Hata: {resp.status_code} — {resp.text}")
+                        st.error(f"Hata: {resp.status_code}")
                 except Exception as e:
                     st.error(f"API hatası: {e}")
 
     st.divider()
 
-# --- Tum Kullanicilar ---
-st.subheader("📋 Tüm Kullanıcılar")
+# --- Onaylanmis & Aktif Kullanicilar ---
+approved_df = users_df[(users_df['approved'] == True) & (users_df['active'] == True)]
+if not approved_df.empty:
+    st.subheader("✅ Onaylı Kullanıcılar")
 
-display_df = users_df.copy()
-display_df['approved'] = display_df['approved'].map({True: '✅ Onaylı', False: '⏳ Bekliyor'})
-display_df['active'] = display_df['active'].map({True: '🟢 Aktif', False: '🔴 Pasif'})
+    for idx, row in approved_df.iterrows():
+        col_info, col_revoke = st.columns([5, 1])
 
-st.dataframe(
-    display_df,
-    column_config={
-        "id": st.column_config.TextColumn("Telegram ID"),
-        "username": st.column_config.TextColumn("Kullanıcı Adı"),
-        "name": st.column_config.TextColumn("Ad Soyad"),
-        "phone": st.column_config.TextColumn("Telefon"),
-        "approved": st.column_config.TextColumn("Onay"),
-        "active": st.column_config.TextColumn("Durum"),
-        "created_at": st.column_config.DatetimeColumn("Kayıt Tarihi", format="D MMM YYYY, HH:mm"),
-    },
-    hide_index=True,
-    use_container_width=True,
-)
+        with col_info:
+            name = row.get('name', '') or ''
+            username = row.get('username', '') or ''
+            phone = row.get('phone', '') or ''
+            display = f"**{name}** (@{username})" if username else f"**{name}**"
+            st.markdown(f"{display} — {phone}")
 
-st.divider()
+        with col_revoke:
+            if st.button("🚫 Askıya Al", key=f"revoke_{row['id']}"):
+                try:
+                    resp = requests.post(
+                        f"{API_BASE}/users/{row['id']}/reject",
+                        json={"reason": "Admin tarafından askıya alındı"},
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        st.warning("Kullanıcı askıya alındı.")
+                        get_telegram_users_df.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"Hata: {resp.status_code}")
+                except Exception as e:
+                    st.error(f"API hatası: {e}")
+
+    st.divider()
+
+# --- Pasif Kullanicilar ---
+inactive_df = users_df[users_df['active'] == False]
+if not inactive_df.empty:
+    st.subheader("🔴 Pasif Kullanıcılar")
+
+    for idx, row in inactive_df.iterrows():
+        col_info, col_reactivate = st.columns([5, 1])
+
+        with col_info:
+            name = row.get('name', '') or ''
+            username = row.get('username', '') or ''
+            approved_status = "(eski onaylı)" if row.get('approved') else "(onaysız)"
+            st.markdown(f"**{name}** (@{username}) {approved_status}")
+
+        with col_reactivate:
+            if st.button("🔄 Aktif Et", key=f"reactivate_{row['id']}"):
+                try:
+                    resp = requests.post(
+                        f"{API_BASE}/users/{row['id']}/approve",
+                        json={"approved_by": "dashboard_admin"},
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        st.success("Kullanıcı tekrar aktif ve onaylı.")
+                        get_telegram_users_df.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"Hata: {resp.status_code}")
+                except Exception as e:
+                    st.error(f"API hatası: {e}")
+
+    st.divider()
 
 # --- Toplu Mesaj ---
 st.subheader("📢 Toplu Mesaj Gönder")
