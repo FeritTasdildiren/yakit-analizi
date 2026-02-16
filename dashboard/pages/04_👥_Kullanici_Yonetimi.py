@@ -4,24 +4,18 @@ from auth import check_auth, logout
 check_auth()
 
 import streamlit as st
-import sys
-import os
 import pandas as pd
+import requests
 
-# Path setup
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from dashboard.components.data_fetcher import (
-    get_telegram_users_df,
-    approve_user
-)
+from dashboard.components.data_fetcher import get_telegram_users_df
 
+API_BASE = "http://localhost:8100/api/v1/telegram"
 
 st.title("👥 Kullanıcı Yönetimi")
 
 # --- Veri Cekme ---
-# Cache'i bypass etmek icin belki session_state kullanabiliriz ama 
-# data_fetcher'da cache suresi kisa (10s).
 users_df = get_telegram_users_df(status="all")
 
 if users_df.empty:
@@ -40,71 +34,107 @@ c3.metric("Bekleyen", pending, delta_color="inverse")
 
 st.divider()
 
-# --- Editor ---
-st.subheader("Kullanıcı Listesi ve Onay")
+# --- Onay Bekleyenler ---
+pending_df = users_df[users_df['approved'] == False]
+if not pending_df.empty:
+    st.subheader("⏳ Onay Bekleyen Kullanıcılar")
 
-# Duzenlenebilir DataFrame
-# ID'yi index yapalim ki degisiklikleri takip edebilelim
-users_df['approved'] = users_df['approved'].astype(bool)
-edited_df = st.data_editor(
-    users_df,
+    for idx, row in pending_df.iterrows():
+        col_info, col_approve, col_reject = st.columns([4, 1, 1])
+
+        with col_info:
+            name = row.get('name', '') or ''
+            username = row.get('username', '') or ''
+            phone = row.get('phone', '') or ''
+            display = f"**{name}** (@{username})" if username else f"**{name}**"
+            st.markdown(f"{display} — {phone}")
+
+        with col_approve:
+            if st.button("✅ Onayla", key=f"approve_{row['id']}"):
+                try:
+                    resp = requests.post(
+                        f"{API_BASE}/users/{row['id']}/approve",
+                        json={"approved_by": "dashboard_admin"},
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        st.success(f"Onaylandı! Kullanıcıya Telegram mesajı gönderildi.")
+                        get_telegram_users_df.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"Hata: {resp.status_code} — {resp.text}")
+                except Exception as e:
+                    st.error(f"API hatası: {e}")
+
+        with col_reject:
+            if st.button("❌ Reddet", key=f"reject_{row['id']}"):
+                try:
+                    resp = requests.post(
+                        f"{API_BASE}/users/{row['id']}/reject",
+                        json={},
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        st.warning("Reddedildi.")
+                        get_telegram_users_df.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"Hata: {resp.status_code} — {resp.text}")
+                except Exception as e:
+                    st.error(f"API hatası: {e}")
+
+    st.divider()
+
+# --- Tum Kullanicilar ---
+st.subheader("📋 Tüm Kullanıcılar")
+
+display_df = users_df.copy()
+display_df['approved'] = display_df['approved'].map({True: '✅ Onaylı', False: '⏳ Bekliyor'})
+display_df['active'] = display_df['active'].map({True: '🟢 Aktif', False: '🔴 Pasif'})
+
+st.dataframe(
+    display_df,
     column_config={
-        "approved": st.column_config.CheckboxColumn(
-            "Onay Durumu",
-            help="Kullanıcıyı onaylamak için işaretleyin",
-            default=False,
-        ),
-        "id": st.column_config.TextColumn("Telegram ID", disabled=True),
-        "username": st.column_config.TextColumn("Kullanıcı Adı", disabled=True),
-        "name": st.column_config.TextColumn("Ad Soyad", disabled=True),
-        "phone": st.column_config.TextColumn("Telefon", disabled=True),
-        "created_at": st.column_config.DatetimeColumn("Kayıt Tarihi", disabled=True, format="D MMM YYYY, HH:mm"),
-        "active": st.column_config.CheckboxColumn("Aktif", disabled=True)
+        "id": st.column_config.TextColumn("Telegram ID"),
+        "username": st.column_config.TextColumn("Kullanıcı Adı"),
+        "name": st.column_config.TextColumn("Ad Soyad"),
+        "phone": st.column_config.TextColumn("Telefon"),
+        "approved": st.column_config.TextColumn("Onay"),
+        "active": st.column_config.TextColumn("Durum"),
+        "created_at": st.column_config.DatetimeColumn("Kayıt Tarihi", format="D MMM YYYY, HH:mm"),
     },
-    disabled=["id", "username", "name", "phone", "created_at", "active"],
     hide_index=True,
     use_container_width=True,
-    key="user_editor"
 )
-
-# --- Kaydet ---
-if st.button("Değişiklikleri Kaydet", type="primary"):
-    # Degisiklikleri bul
-    # edited_df ile users_df karsilastir
-    # users_df cached oldugu icin orijinal hali duruyor (eger data_editor key degismezse)
-    
-    # ID uzerinden karsilastir (sorting riskini onlemek icin)
-    original_status = users_df.set_index('id')['approved'].to_dict()
-    
-    changes = 0
-    for index, row in edited_df.iterrows():
-        uid = row['id']
-        new_status = row['approved']
-        old_status = original_status.get(uid)
-        
-        if old_status is not None and new_status != old_status:
-            # Degisiklik var
-            approve_user(str(uid), new_status)
-            changes += 1
-            
-    if changes > 0:
-        st.success(f"{changes} kullanıcı güncellendi.")
-        # Cache'i temizle ve sayfayi yenile
-        get_telegram_users_df.clear()
-        st.rerun()
-    else:
-        st.info("Değişiklik yapılmadı.")
 
 st.divider()
 
 # --- Toplu Mesaj ---
 st.subheader("📢 Toplu Mesaj Gönder")
+st.caption("Tüm onaylı ve aktif kullanıcılara Telegram mesajı gönderir.")
+
 with st.form("broadcast_form"):
     msg = st.text_area("Mesaj İçeriği", placeholder="Tüm onaylı kullanıcılara gönderilecek mesaj...")
-    submitted = st.form_submit_button("Gönder")
-    
+    submitted = st.form_submit_button("📤 Gönder", type="primary")
+
     if submitted and msg:
-        # TODO: Implement broadcast logic (API Call)
-        st.warning("Bu özellik henüz aktif değil (API entegrasyonu bekleniyor).")
+        try:
+            resp = requests.post(
+                f"{API_BASE}/broadcast",
+                json={"message": msg},
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                st.success(
+                    f"✅ Mesaj gönderildi! "
+                    f"Başarılı: {data.get('sent', 0)}, "
+                    f"Başarısız: {data.get('failed', 0)}, "
+                    f"Toplam: {data.get('total', 0)}"
+                )
+            else:
+                st.error(f"Hata: {resp.status_code} — {resp.text}")
+        except Exception as e:
+            st.error(f"API hatası: {e}")
     elif submitted:
         st.error("Mesaj içeriği boş olamaz.")
