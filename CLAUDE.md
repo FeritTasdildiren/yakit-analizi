@@ -34,6 +34,13 @@
 | **Proje Durumu** | FAZ 1+2 TAMAMLANDI (Sprint S0-S5, 24 görev, 531 test) |
 | **Son Güncelleme** | 2026-02-16 |
 | **GitHub** | https://github.com/FeritTasdildiren/yakit-analizi |
+| **Sunucu** | 157.173.116.230 (ferittasdildiren.com) |
+| **API URL** | https://ferittasdildiren.com/yakit_analiz/api/docs |
+| **Dashboard URL** | https://ferittasdildiren.com/yakit_analiz/ |
+| **Proje Yolu (Sunucu)** | /var/www/yakit_analiz/ |
+| **DB** | postgresql://yakit_analizi:yakit2026secure@localhost:5433/yakit_analizi |
+| **Redis** | redis://localhost:6379/3 |
+| **PM2** | yakit-api (8100), yakit-celery, yakit-dashboard (8101) |
 
 ---
 
