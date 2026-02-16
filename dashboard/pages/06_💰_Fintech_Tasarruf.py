@@ -1,19 +1,14 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from auth import check_auth, logout
+check_auth()
+
 import streamlit as st
 import pandas as pd
-import sys
-import os
 
-# Add project root to sys.path to allow imports from src and dashboard
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from dashboard.components.data_fetcher import get_latest_mbe
-
-# Sayfa Ayarları
-st.set_page_config(
-    page_title="Fintech & Tasarruf",
-    page_icon="💰",
-    layout="wide"
-)
 
 st.title("💰 Fintech & Yakıt Tasarrufu")
 st.markdown("Yakıt harcamalarınızı optimize edin ve bütçenizi koruyun.")
@@ -25,14 +20,13 @@ col_calc1, col_calc2 = st.columns([1, 2])
 
 with col_calc1:
     st.subheader("Parametreler")
-    
-    # Kullanıcı Girişleri
+
     fuel_type = st.selectbox(
         "Yakıt Türü",
         ["Benzin", "Motorin", "LPG"],
         index=0
     )
-    
+
     monthly_km = st.slider(
         "Aylık Mesafe (km)",
         min_value=500,
@@ -40,7 +34,7 @@ with col_calc1:
         value=1500,
         step=100
     )
-    
+
     consumption = st.slider(
         "Ortalama Tüketim (lt/100km)",
         min_value=4.0,
@@ -48,8 +42,7 @@ with col_calc1:
         value=7.5,
         step=0.1
     )
-    
-    # Varsayılan fiyatlar (Kullanıcı değiştirebilir)
+
     default_prices = {"Benzin": 43.0, "Motorin": 43.0, "LPG": 25.0}
     current_price = st.number_input(
         "Güncel Pompa Fiyatı (TL)",
@@ -61,20 +54,18 @@ with col_calc1:
 
 with col_calc2:
     st.subheader("Maliyet Analizi")
-    
-    # Hesaplamalar
+
     monthly_liters = (monthly_km / 100) * consumption
     monthly_cost = monthly_liters * current_price
     yearly_cost = monthly_cost * 12
     daily_cost = monthly_cost / 30
-    
-    # Metriklerin Gösterimi
+
     m1, m2, m3 = st.columns(3)
-    
+
     m1.metric("Aylık Maliyet", f"{monthly_cost:,.2f} TL")
     m2.metric("Yıllık Maliyet", f"{yearly_cost:,.2f} TL")
     m3.metric("Günlük Ortalama", f"{daily_cost:,.2f} TL")
-    
+
     st.info(f"Ayda yaklaşık **{monthly_liters:.1f} litre** yakıt tüketiyorsunuz.")
 
 st.divider()
@@ -82,11 +73,9 @@ st.divider()
 # --- 2. AKILLI TANKLAMA ÖNERİSİ ---
 st.header("🧠 Akıllı Tanklama Önerisi")
 
-# Seçilen yakıt türüne göre MBE verisini çek
-# API 'benzin' veya 'motorin' bekliyor (küçük harf). LPG için şu an veri yoksa handle etmeliyiz.
 api_fuel_type = fuel_type.lower()
 if api_fuel_type == "lpg":
-    mbe_data = None # LPG için MBE verisi olmayabilir
+    mbe_data = None
 else:
     try:
         mbe_data = get_latest_mbe(api_fuel_type)
@@ -99,29 +88,28 @@ col_advice1, col_advice2 = st.columns([2, 1])
 with col_advice1:
     if mbe_data:
         mbe_val = mbe_data.get('value', 0)
-        
-        # MBE Değerine Göre Mantık
-        if mbe_val > 1.5: # Pozitif ve yüksek -> Zam beklentisi
+
+        if mbe_val > 1.5:
             st.error(f"⚠️ **ZAM BEKLENTİSİ!** (MBE: {mbe_val:+.2f} TL)")
             st.markdown("Piyasa verileri fiyatların yükseleceğini işaret ediyor. Deponuzu **bugün doldurmanız** tavsiye edilir.")
-        elif mbe_val < -1.5: # Negatif -> İndirim beklentisi
+        elif mbe_val < -1.5:
             st.success(f"✅ **İNDİRİM BEKLENTİSİ!** (MBE: {mbe_val:+.2f} TL)")
             st.markdown("Piyasa verileri fiyatların düşebileceğini işaret ediyor. Acil değilse **beklemeniz** tavsiye edilir.")
-        else: # Nötr
+        else:
             st.info(f"⚖️ **FİYATLAR STABİL** (MBE: {mbe_val:+.2f} TL)")
             st.markdown("Önemli bir fiyat değişikliği beklenmiyor. İhtiyacınız kadar alabilirsiniz.")
-            
-        st.caption(f"*Veri Kaynağı: Piyasa Başabaş Noktası (MBE) Analizi - Trend: {mbe_data.get('trend', '-') }*")
-        
+
+        st.caption(f"*Veri Kaynağı: Piyasa Başabaş Noktası (MBE) Analizi - Trend: {mbe_data.get('trend', '-')}*")
+
     elif api_fuel_type == "lpg":
-         st.warning("LPG için şu an aktif piyasa analizi bulunmamaktadır.")
+        st.warning("LPG için şu an aktif piyasa analizi bulunmamaktadır.")
     else:
         st.warning("Piyasa verisi şu an alınamıyor. Lütfen daha sonra tekrar deneyiniz.")
 
 with col_advice2:
     st.markdown("#### Nasıl Çalışır?")
     st.markdown("""
-    **MBE (Piyasa Başabaş Noktası)**, uluslararası petrol fiyatları ve döviz kurlarını analiz ederek 
+    **MBE (Piyasa Başabaş Noktası)**, uluslararası petrol fiyatları ve döviz kurlarını analiz ederek
     gerçek maliyet ile pompa fiyatı arasındaki farkı hesaplar.
     """)
 
@@ -135,10 +123,10 @@ card_data = {
     "İndirim Oranı": ["%3 - %5", "Puan Bazlı", "Mil Kazanımı", "%2 - %3", "Puan Bazlı"],
     "Puan/Ödül": ["Worldpuan", "Smart Puan", "THY Mil", "Yakıt Puan", "MaxiPuan"],
     "Özel Avantajlar": [
-        "Kampanyalarda ek puan", 
-        "Market alışverişlerinde puan", 
-        "Uçuş mili kazanımı", 
-        "Mobil ödeme kolaylığı", 
+        "Kampanyalarda ek puan",
+        "Market alışverişlerinde puan",
+        "Uçuş mili kazanımı",
+        "Mobil ödeme kolaylığı",
         "Anlaşmalı banka avantajları"
     ]
 }

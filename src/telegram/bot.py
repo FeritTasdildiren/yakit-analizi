@@ -25,6 +25,7 @@ from src.telegram.registration import (
     WAITING_PHONE,
     cancel_registration,
     receive_contact,
+    receive_phone_text,
     start_command,
 )
 
@@ -46,6 +47,10 @@ async def create_bot_application() -> Application:
         states={
             WAITING_PHONE: [
                 MessageHandler(filters.CONTACT, receive_contact),
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    receive_phone_text,
+                ),
             ],
         },
         fallbacks=[

@@ -3,11 +3,12 @@ Telegram kayit akisi.
 
 ConversationHandler ile kullanici kayit sureci:
 1. /start → Hosgeldin + KVKK metni
-2. Telefon numarasi paylasimi (Contact butonu)
+2. Telefon numarasi paylasimi (Contact butonu VEYA metin olarak yaz)
 3. DB kaydi + Admin onay bekleme mesaji
 """
 
 import logging
+import re
 
 from telegram import (
     KeyboardButton,
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 # ConversationHandler state'leri
 WAITING_PHONE = 0
 
+# Telefon numarasi regex: +90xxx, 05xxx, 5xxx gibi formatlar
+_PHONE_REGEX = re.compile(r"^\+?\d[\d\s\-()]{7,15}$")
+
 
 # ────────────────────────────────────────────────────────────────────────────
 #  KVKK + Disclaimer Metni
@@ -44,7 +48,8 @@ WELCOME_MESSAGE = (
     "📋 KVKK AYDINLATMA: Telefon numaranız yalnızca kimlik doğrulama "
     "amacıyla saklanır. Verileriniz üçüncü taraflarla paylaşılmaz. "
     "İptal için /iptal yazabilirsiniz.\n\n"
-    "Devam etmek için telefon numaranızı paylaşın:"
+    "Devam etmek için aşağıdaki butona basarak telefon numaranızı paylaşın\n"
+    "veya numaranızı metin olarak yazın (ör: 05XX XXX XX XX):"
 )
 
 ALREADY_REGISTERED_APPROVED = (
@@ -68,6 +73,12 @@ REGISTRATION_REACTIVATED = (
     "⏳ Admin onayı bekleniyor. Onaylandığında size bildirim göndereceğiz."
 )
 
+INVALID_PHONE = (
+    "❌ Geçersiz telefon numarası.\n\n"
+    "Lütfen aşağıdaki butona basarak numaranızı paylaşın\n"
+    "veya şu formatta yazın: 05XX XXX XX XX"
+)
+
 
 # ────────────────────────────────────────────────────────────────────────────
 #  /start Komutu
@@ -78,21 +89,12 @@ async def start_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
-    """
-    /start komut isleyicisi.
-
-    Yeni kullanici: Kayit akisini baslatir.
-    Mevcut + onaylanmis: "Zaten kayitlisiniz" mesaji.
-    Mevcut + beklemede: "Onay bekleniyor" mesaji.
-    Iptal etmis (is_active=False): Yeniden aktif eder.
-    """
     user = update.effective_user
     if user is None:
-        return -1  # ConversationHandler.END
+        return -1
 
     telegram_id = user.id
 
-    # Mevcut kullaniciyi kontrol et
     async with async_session_factory() as session:
         try:
             existing = await get_user_by_telegram_id(session, telegram_id)
@@ -107,16 +109,15 @@ async def start_command(
                 ALREADY_REGISTERED_APPROVED,
                 reply_markup=ReplyKeyboardRemove(),
             )
-            return -1  # ConversationHandler.END
+            return -1
 
         if existing.is_active and not existing.is_approved:
             await update.message.reply_text(
                 ALREADY_REGISTERED_PENDING,
                 reply_markup=ReplyKeyboardRemove(),
             )
-            return -1  # ConversationHandler.END
+            return -1
 
-        # Kullanici daha once iptal etmis, yeniden aktif et
         if not existing.is_active:
             async with async_session_factory() as session:
                 try:
@@ -129,7 +130,7 @@ async def start_command(
                 REGISTRATION_REACTIVATED,
                 reply_markup=ReplyKeyboardRemove(),
             )
-            return -1  # ConversationHandler.END
+            return -1
 
     # Yeni kullanici — telefon numarasi iste
     contact_button = KeyboardButton(
@@ -151,7 +152,7 @@ async def start_command(
 
 
 # ────────────────────────────────────────────────────────────────────────────
-#  Telefon Numarasi Alma
+#  Telefon Numarasi Alma — Contact butonu
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -159,11 +160,6 @@ async def receive_contact(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
-    """
-    Kullanicidan gelen contact bilgisini isler.
-
-    Telefon numarasini alir, DB'ye kaydeder ve onay bekleme mesaji gonderir.
-    """
     user = update.effective_user
     contact = update.message.contact
 
@@ -172,9 +168,8 @@ async def receive_contact(
             "❌ Telefon numarası alınamadı. Lütfen tekrar deneyin: /start",
             reply_markup=ReplyKeyboardRemove(),
         )
-        return -1  # ConversationHandler.END
+        return -1
 
-    # Guvenlik: Contact'in kendi telefonu oldugunu dogrula
     if contact.user_id and contact.user_id != user.id:
         await update.message.reply_text(
             "❌ Lütfen kendi telefon numaranızı paylaşın.",
@@ -183,28 +178,81 @@ async def receive_contact(
         return WAITING_PHONE
 
     phone_number = contact.phone_number
+    return await _save_registration(
+        update, user, phone_number,
+        contact.first_name, contact.last_name,
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Telefon Numarasi Alma — Metin olarak yazma
+# ────────────────────────────────────────────────────────────────────────────
+
+
+async def receive_phone_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    """Kullanıcı telefon numarasını metin olarak yazdığında işler."""
+    user = update.effective_user
+    if user is None:
+        return -1
+
+    text = update.message.text.strip()
+
+    # Telefon numarası formatını doğrula
+    cleaned = re.sub(r"[\s\-()]", "", text)
+    if not _PHONE_REGEX.match(text) or len(cleaned) < 10:
+        await update.message.reply_text(INVALID_PHONE)
+        return WAITING_PHONE
+
+    # Türkiye numarası normalizasyonu
+    if cleaned.startswith("0"):
+        cleaned = "+90" + cleaned[1:]
+    elif cleaned.startswith("90") and not cleaned.startswith("+"):
+        cleaned = "+" + cleaned
+    elif not cleaned.startswith("+"):
+        cleaned = "+90" + cleaned
+
+    return await _save_registration(
+        update, user, cleaned,
+        user.first_name, user.last_name,
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Ortak Kayıt Fonksiyonu
+# ────────────────────────────────────────────────────────────────────────────
+
+
+async def _save_registration(
+    update: Update,
+    user,
+    phone_number: str,
+    first_name: str | None,
+    last_name: str | None,
+) -> int:
+    """Kullanıcıyı DB'ye kaydeder."""
     telegram_id = user.id
     username = user.username
-    first_name = user.first_name or contact.first_name
-    last_name = user.last_name or contact.last_name
 
-    # DB'ye kaydet
     async with async_session_factory() as session:
         try:
             await upsert_telegram_user(
                 session,
                 telegram_id=telegram_id,
                 username=username,
-                first_name=first_name,
-                last_name=last_name,
+                first_name=first_name or user.first_name,
+                last_name=last_name or user.last_name,
                 phone_number=phone_number,
             )
             await session.commit()
 
             logger.info(
-                "Yeni kayit: telegram_id=%s, phone=%s",
+                "Yeni kayit: telegram_id=%s, username=%s, phone=%s",
                 telegram_id,
-                phone_number[:4] + "****",  # Loglarda maskeleme
+                username,
+                phone_number[:4] + "****",
             )
         except Exception as exc:
             logger.error("Kayit DB hatasi: %s", exc)
@@ -212,14 +260,14 @@ async def receive_contact(
                 "❌ Kayıt sırasında bir hata oluştu. Lütfen tekrar deneyin: /start",
                 reply_markup=ReplyKeyboardRemove(),
             )
-            return -1  # ConversationHandler.END
+            return -1
 
     await update.message.reply_text(
         REGISTRATION_SUCCESS,
         reply_markup=ReplyKeyboardRemove(),
     )
 
-    return -1  # ConversationHandler.END
+    return -1
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -231,9 +279,8 @@ async def cancel_registration(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
-    """Kayit akisini iptal eder (ConversationHandler fallback)."""
     await update.message.reply_text(
         "❌ Kayıt işlemi iptal edildi. Tekrar başlamak için /start yazın.",
         reply_markup=ReplyKeyboardRemove(),
     )
-    return -1  # ConversationHandler.END
+    return -1

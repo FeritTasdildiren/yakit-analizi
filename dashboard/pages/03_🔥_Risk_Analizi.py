@@ -1,3 +1,8 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from auth import check_auth, logout
+check_auth()
+
 import streamlit as st
 import sys
 import os
@@ -18,7 +23,6 @@ from dashboard.components.charts import (
     create_regime_timeline
 )
 
-st.set_page_config(page_title="Risk Analizi", page_icon="🔥", layout="wide")
 
 st.title("🔥 Risk Analizi")
 

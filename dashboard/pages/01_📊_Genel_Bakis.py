@@ -1,3 +1,8 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from auth import check_auth, logout
+check_auth()
+
 import streamlit as st
 import sys
 import os
@@ -16,7 +21,6 @@ from dashboard.components.data_fetcher import (
 )
 from dashboard.components.charts import create_mbe_gauge, create_trend_line
 
-st.set_page_config(page_title="Genel Bakış", page_icon="📊", layout="wide")
 
 st.title("📊 Genel Bakış")
 

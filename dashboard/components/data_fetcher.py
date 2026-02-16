@@ -1,18 +1,16 @@
 """
 Dashboard veri erisim katmani.
-Veritabanindan async olarak veri ceker ve Streamlit icin sync wrapper saglar.
+Sync SQLAlchemy engine kullaniyor (Streamlit event loop ile uyumlu).
 """
 
-import asyncio
 import logging
 import requests
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 from decimal import Decimal
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy import select, desc, func, update, text
-from sqlalchemy.orm import selectinload
+from sqlalchemy import create_engine, select, desc, func, update, text
+from sqlalchemy.orm import Session
 
 from src.models import (
     MBECalculation,
@@ -29,34 +27,31 @@ from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# --- Async Engine ---
-engine = create_async_engine(settings.DATABASE_URL, echo=False)
+# --- Sync Engine (asyncpg -> psycopg2) ---
+_sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+engine = create_engine(_sync_url, echo=False, pool_pre_ping=True, pool_size=5)
 
 # --- Helpers ---
 def to_float(val):
-    """Decimal'i float'a cevirir."""
     if isinstance(val, Decimal):
         return float(val)
     return val
 
 def _df_convert_decimals(df: pd.DataFrame) -> pd.DataFrame:
-    """DataFrame icindeki Decimal kolonlari float'a cevirir."""
     for col in df.columns:
-        # Check if column is object type which might hold Decimals
         if df[col].dtype == object:
             try:
-                # Try converting one element to check
                 if len(df) > 0 and isinstance(df[col].iloc[0], Decimal):
                     df[col] = df[col].apply(lambda x: float(x) if x is not None else None)
             except Exception:
                 pass
     return df
 
-# --- Async Data Fetchers ---
+# --- Sync Data Fetchers ---
 
-async def _fetch_latest_mbe(fuel_type: str):
-    async with AsyncSession(engine) as session:
-        result = await session.execute(
+def _fetch_latest_mbe(fuel_type: str):
+    with Session(engine) as session:
+        result = session.execute(
             select(MBECalculation)
             .where(MBECalculation.fuel_type == fuel_type)
             .order_by(desc(MBECalculation.trade_date))
@@ -64,10 +59,10 @@ async def _fetch_latest_mbe(fuel_type: str):
         )
         return result.scalar_one_or_none()
 
-async def _fetch_mbe_history(fuel_type: str, days: int):
+def _fetch_mbe_history(fuel_type: str, days: int):
     start_date = datetime.now().date() - timedelta(days=days)
-    async with AsyncSession(engine) as session:
-        result = await session.execute(
+    with Session(engine) as session:
+        result = session.execute(
             select(MBECalculation)
             .where(
                 MBECalculation.fuel_type == fuel_type,
@@ -89,9 +84,9 @@ async def _fetch_mbe_history(fuel_type: str, days: int):
             for d in data
         ]
 
-async def _fetch_latest_risk(fuel_type: str):
-    async with AsyncSession(engine) as session:
-        result = await session.execute(
+def _fetch_latest_risk(fuel_type: str):
+    with Session(engine) as session:
+        result = session.execute(
             select(RiskScore)
             .where(RiskScore.fuel_type == fuel_type)
             .order_by(desc(RiskScore.trade_date))
@@ -99,10 +94,10 @@ async def _fetch_latest_risk(fuel_type: str):
         )
         return result.scalar_one_or_none()
 
-async def _fetch_risk_history(days: int):
+def _fetch_risk_history(days: int):
     start_date = datetime.now().date() - timedelta(days=days)
-    async with AsyncSession(engine) as session:
-        result = await session.execute(
+    with Session(engine) as session:
+        result = session.execute(
             select(RiskScore)
             .where(RiskScore.trade_date >= start_date)
             .order_by(RiskScore.trade_date)
@@ -122,9 +117,9 @@ async def _fetch_risk_history(days: int):
             for d in data
         ]
 
-async def _fetch_latest_prediction(fuel_type: str):
-    async with AsyncSession(engine) as session:
-        result = await session.execute(
+def _fetch_latest_prediction(fuel_type: str):
+    with Session(engine) as session:
+        result = session.execute(
             select(MLPrediction)
             .where(MLPrediction.fuel_type == fuel_type)
             .order_by(desc(MLPrediction.prediction_date))
@@ -132,10 +127,10 @@ async def _fetch_latest_prediction(fuel_type: str):
         )
         return result.scalar_one_or_none()
 
-async def _fetch_prediction_history(fuel_type: str, days: int):
+def _fetch_prediction_history(fuel_type: str, days: int):
     start_date = datetime.now().date() - timedelta(days=days)
-    async with AsyncSession(engine) as session:
-        result = await session.execute(
+    with Session(engine) as session:
+        result = session.execute(
             select(MLPrediction)
             .where(
                 MLPrediction.fuel_type == fuel_type,
@@ -144,16 +139,16 @@ async def _fetch_prediction_history(fuel_type: str, days: int):
             .order_by(MLPrediction.prediction_date)
         )
         data = result.scalars().all()
-        # Gercek degisimleri de cekelim
-        prices = await session.execute(
-             select(PriceChange)
-             .where(
-                 PriceChange.fuel_type == fuel_type,
-                 PriceChange.change_date >= start_date
-             )
+
+        prices = session.execute(
+            select(PriceChange)
+            .where(
+                PriceChange.fuel_type == fuel_type,
+                PriceChange.change_date >= start_date
+            )
         )
         price_map = {p.change_date: to_float(p.change_amount) for p in prices.scalars().all()}
-        
+
         return [
             {
                 "date": d.prediction_date,
@@ -167,9 +162,9 @@ async def _fetch_prediction_history(fuel_type: str, days: int):
             for d in data
         ]
 
-async def _fetch_alerts(limit: int = 50):
-    async with AsyncSession(engine) as session:
-        result = await session.execute(
+def _fetch_alerts(limit: int = 50):
+    with Session(engine) as session:
+        result = session.execute(
             select(Alert)
             .order_by(desc(Alert.created_at))
             .limit(limit)
@@ -188,15 +183,15 @@ async def _fetch_alerts(limit: int = 50):
             for d in data
         ]
 
-async def _fetch_telegram_users(status: str = "all"):
-    async with AsyncSession(engine) as session:
+def _fetch_telegram_users(status: str = "all"):
+    with Session(engine) as session:
         query = select(TelegramUser).order_by(desc(TelegramUser.created_at))
         if status == "pending":
             query = query.where(TelegramUser.is_approved == False)
         elif status == "approved":
             query = query.where(TelegramUser.is_approved == True)
-        
-        result = await session.execute(query)
+
+        result = session.execute(query)
         data = result.scalars().all()
         return [
             {
@@ -211,18 +206,18 @@ async def _fetch_telegram_users(status: str = "all"):
             for d in data
         ]
 
-async def _update_telegram_user(user_id: int, approved: bool):
-    async with AsyncSession(engine) as session:
-        await session.execute(
+def _update_telegram_user(user_id: int, approved: bool):
+    with Session(engine) as session:
+        session.execute(
             update(TelegramUser)
             .where(TelegramUser.telegram_id == user_id)
             .values(is_approved=approved, updated_at=datetime.now())
         )
-        await session.commit()
+        session.commit()
 
-async def _fetch_regime_events():
-    async with AsyncSession(engine) as session:
-        result = await session.execute(select(RegimeEvent).order_by(RegimeEvent.start_date))
+def _fetch_regime_events():
+    with Session(engine) as session:
+        result = session.execute(select(RegimeEvent).order_by(RegimeEvent.start_date))
         data = result.scalars().all()
         return [
             {
@@ -234,9 +229,9 @@ async def _fetch_regime_events():
             for d in data
         ]
 
-async def _fetch_price_changes(limit: int = 10):
-    async with AsyncSession(engine) as session:
-        result = await session.execute(
+def _fetch_price_changes(limit: int = 10):
+    with Session(engine) as session:
+        result = session.execute(
             select(PriceChange)
             .order_by(desc(PriceChange.change_date))
             .limit(limit)
@@ -256,7 +251,7 @@ async def _fetch_price_changes(limit: int = 10):
 
 @st.cache_data(ttl=60)
 def get_latest_mbe(fuel_type: str):
-    data = asyncio.run(_fetch_latest_mbe(fuel_type))
+    data = _fetch_latest_mbe(fuel_type)
     if data:
         return {
             "value": to_float(data.mbe_value),
@@ -268,12 +263,12 @@ def get_latest_mbe(fuel_type: str):
 
 @st.cache_data(ttl=300)
 def get_mbe_history(fuel_type: str, days: int = 60):
-    data = asyncio.run(_fetch_mbe_history(fuel_type, days))
+    data = _fetch_mbe_history(fuel_type, days)
     return pd.DataFrame(data)
 
 @st.cache_data(ttl=60)
 def get_latest_risk_score(fuel_type: str):
-    data = asyncio.run(_fetch_latest_risk(fuel_type))
+    data = _fetch_latest_risk(fuel_type)
     if data:
         return {
             "score": to_float(data.composite_score),
@@ -283,12 +278,12 @@ def get_latest_risk_score(fuel_type: str):
 
 @st.cache_data(ttl=300)
 def get_risk_history_df(days: int = 30):
-    data = asyncio.run(_fetch_risk_history(days))
+    data = _fetch_risk_history(days)
     return pd.DataFrame(data)
 
 @st.cache_data(ttl=60)
 def get_latest_prediction(fuel_type: str):
-    data = asyncio.run(_fetch_latest_prediction(fuel_type))
+    data = _fetch_latest_prediction(fuel_type)
     if data:
         return {
             "direction": data.predicted_direction,
@@ -303,43 +298,37 @@ def get_latest_prediction(fuel_type: str):
 
 @st.cache_data(ttl=300)
 def get_prediction_history_df(fuel_type: str, days: int = 30):
-    data = asyncio.run(_fetch_prediction_history(fuel_type, days))
+    data = _fetch_prediction_history(fuel_type, days)
     return pd.DataFrame(data)
 
 @st.cache_data(ttl=60)
 def get_alerts_df(limit: int = 50):
-    data = asyncio.run(_fetch_alerts(limit))
+    data = _fetch_alerts(limit)
     return pd.DataFrame(data)
 
 @st.cache_data(ttl=60)
 def get_price_changes_df(limit: int = 10):
-    data = asyncio.run(_fetch_price_changes(limit))
+    data = _fetch_price_changes(limit)
     return pd.DataFrame(data)
 
 @st.cache_data(ttl=3600)
 def get_regime_timeline():
-    data = asyncio.run(_fetch_regime_events())
+    data = _fetch_regime_events()
     return pd.DataFrame(data)
 
-# Users (No cache for admin actions usually, but fetch can be cached briefly)
-@st.cache_data(ttl=10) 
+@st.cache_data(ttl=10)
 def get_telegram_users_df(status: str = "all"):
-    data = asyncio.run(_fetch_telegram_users(status))
+    data = _fetch_telegram_users(status)
     return pd.DataFrame(data)
 
 def approve_user(user_id: str, approved: bool):
-    """Admin action: Kullaniciyi onayla/reddet."""
-    # user_id str gelebilir, int'e cevir
     uid = int(user_id)
-    asyncio.run(_update_telegram_user(uid, approved))
-    # Clear cache
+    _update_telegram_user(uid, approved)
     get_telegram_users_df.clear()
 
 def get_system_status():
-    """Circuit breaker status from API."""
     try:
-        # Localhost varsayimi — config'den de alinabilir ama dashboard genelde ayni makinede
-        resp = requests.get("http://localhost:8000/api/v1/ml/health", timeout=2)
+        resp = requests.get("http://localhost:8100/api/v1/ml/health", timeout=2)
         if resp.status_code == 200:
             return resp.json()
     except Exception:
