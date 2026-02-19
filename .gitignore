@@ -9,3 +9,4 @@ build/
 .mypy_cache/
 *.db
 ml_models/
+.DS_Store

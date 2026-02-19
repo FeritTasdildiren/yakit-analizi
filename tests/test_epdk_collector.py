@@ -526,7 +526,7 @@ class TestEdgeCases:
             il_kodu="34",
             dagitici_sayisi=5,
         )
-        assert ppd.source == "epdk_xml"
+        assert ppd.source == "petrol_ofisi"
         assert ppd.pump_price_tl_lt == Decimal("43.72")
 
     def test_epdk_record_model(self) -> None:

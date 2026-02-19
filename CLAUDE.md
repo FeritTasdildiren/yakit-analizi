@@ -4,7 +4,7 @@
 
 ---
 
-## ⛔ Proje Hafıza Sistemi — İLK OKUNAN BÖLÜM
+## Proje Hafıza Sistemi
 
 **Bu projeye devam eden her LLM ve geliştirici aşağıdaki 3 dosyayı birlikte kullanmak ZORUNDADIR:**
 
@@ -19,8 +19,6 @@
 2. `reports.md`'yi oku — son yapılan işi ve yarım kalan şeyleri kontrol et
 3. `experience.md`'yi oku — önceki tecrübelerden faydalan, aynı hataları tekrarlama
 
-**⚠️ Bu dosyalar olmadan geliştirmeye başlama. Yoksa oluştur, varsa oku.**
-
 ---
 
 ## Proje Bilgileri
@@ -28,19 +26,14 @@
 | Alan | Değer |
 |------|-------|
 | **Proje Adı** | Yakıt Analizi — Türkiye Akaryakıt Zam Öngörü Sistemi |
-| **Açıklama** | Akaryakıt fiyat değişimlerini önceden tahmin eden erken uyarı ve maliyet optimizasyon sistemi |
+| **Açıklama** | Akaryakıt fiyat değişimlerini önceden tahmin eden erken uyarı ve maliyet optimizasyon sistemi. Brent petrol, USD/TRY döviz kuru, EPDK pompa fiyatları, ÖTV ve MBE (Maliyet Baz Etki) analiziyle yakıt zamlarını 1-3 gün önceden tespit eder. |
 | **Oluşturma Tarihi** | 2026-02-15 |
-| **Teknoloji Stack** | Python 3.12+, FastAPI, PostgreSQL (asyncpg), Redis, Celery, LightGBM, Streamlit, python-telegram-bot |
-| **Proje Durumu** | FAZ 1+2 TAMAMLANDI (Sprint S0-S5, 24 görev, 531 test) |
-| **Son Güncelleme** | 2026-02-16 |
-| **GitHub** | https://github.com/FeritTasdildiren/yakit-analizi |
-| **Sunucu** | 157.173.116.230 (ferittasdildiren.com) |
-| **API URL** | https://ferittasdildiren.com/yakit_analiz/api/docs |
-| **Dashboard URL** | https://ferittasdildiren.com/yakit_analiz/ |
-| **Proje Yolu (Sunucu)** | /var/www/yakit_analiz/ |
-| **DB** | postgresql://yakit_analizi:yakit2026secure@localhost:5433/yakit_analizi |
-| **Redis** | redis://localhost:6379/3 |
-| **PM2** | yakit-api (8100), yakit-celery, yakit-dashboard (8101) |
+| **Teslim Tarihi** | 2026-02-20 |
+| **Teknoloji Stack** | Python 3.13, FastAPI, Streamlit, Celery+Redis, PostgreSQL, LightGBM, python-telegram-bot |
+| **Proje Durumu** | TESLİM EDİLDİ |
+| **Son Güncelleme** | 2026-02-20 |
+| **Toplam Görev** | 80 (TASK-001 ~ TASK-080) |
+| **Toplam Sprint** | 21 (S0 ~ S21) |
 
 ---
 
@@ -48,117 +41,109 @@
 
 | Teknoloji | Seçim | Gerekçe |
 |-----------|-------|---------|
-| Backend | FastAPI + Uvicorn | Async native, otomatik OpenAPI docs, yüksek performans |
-| Veritabanı | PostgreSQL 16 + asyncpg | JSONB (SHAP verileri), ENUM (fuel_type), temporal tablolar, async driver |
-| ORM | SQLAlchemy 2.0 (async) | Alembic migration desteği, repository pattern uyumu |
-| Task Queue | Celery + Redis | Periyodik veri toplama, ML tahmin, bildirim zamanlaması |
-| ML | LightGBM + scikit-learn | Hızlı eğitim, düşük bellek, SHAP uyumu, TimeSeriesSplit |
-| Açıklanabilirlik | SHAP | Feature importance, tahmin gerekçelendirme |
-| Dashboard | Streamlit | Hızlı prototipleme, Plotly entegrasyonu, cache desteği |
-| Telegram Bot | python-telegram-bot 21+ | Async polling, ConversationHandler, modern API |
-| Veri Hassasiyeti | Python Decimal | float YASAK — finansal hesaplamalarda hassasiyet kaybı önlenir |
-| Migration | Alembic (async) | asyncpg driver ile uyumlu, zincirli revision'lar |
+| Backend API | FastAPI (Python 3.13) | Async I/O, otomatik OpenAPI, Pydantic v2 doğrulama |
+| Dashboard | Streamlit | Hızlı prototipleme, data viz, admin paneli için ideal |
+| ML Model | LightGBM | Hızlı eğitim, az veriyle iyi performans, SHAP uyumu |
+| ML Pipeline | v5 (2 aşamalı: Stage-1 sınıflandırma + Stage-2 regresyon) | Purged walk-forward CV, Platt/Beta kalibrasyon |
+| Veritabanı | PostgreSQL 16 (port 5433) | Async (asyncpg), güçlü JSON/time series desteği |
+| ORM | SQLAlchemy 2.0 (async) | Modern async session, Alembic migration |
+| Task Queue | Celery + Redis | Periyodik veri toplama, tahmin, bildirim pipeline |
+| Bot | python-telegram-bot v21 | Async, ConversationHandler, ReplyKeyboard |
+| Veri Kaynakları | EPDK (PO scraping), Yahoo Finance (Brent), TCMB (FX) | 3 katmanlı fallback, WAF bypass |
+| Deployment | PM2 (3 process) | API + Celery + Dashboard ayrı yönetim |
 
 ---
 
-## Mimari — 5 Katmanlı Yapı
+## Mimari Kararlar
 
+### 5 Katmanlı Mimari
+1. **Katman 1 — Veri Toplama**: Brent petrol, USD/TRY, EPDK pompa fiyatları, ÖTV oranları
+2. **Katman 2 — MBE Hesaplama**: Maliyet Baz Etkisi (cost_base, mbe_value, mbe_components)
+3. **Katman 3 — Risk/Eşik Motoru**: Risk skoru, eşik yönetimi (hysteresis), politik gecikme state machine
+4. **Katman 4 — ML Tahmin (v5)**: LightGBM 3-class sınıflandırma → regresyon, SHAP, circuit breaker
+5. **Katman 5 — Sunum**: Telegram Bot + Streamlit Dashboard + API
+
+### MBE (Maliyet Baz Etkisi) Formülü
 ```
-┌─────────────────────────────────────────┐
-│ KATMAN 5: SUNUM                         │
-│ Telegram Bot │ Streamlit Dashboard      │
-│ Celery Beat (zamanlama)                 │
-├─────────────────────────────────────────┤
-│ KATMAN 4: ML TAHMİN                     │
-│ LightGBM (3-class + regresyon)          │
-│ SHAP │ Circuit Breaker │ Feature Eng.   │
-├─────────────────────────────────────────┤
-│ KATMAN 3: RİSK / EŞİK                  │
-│ Risk Engine (5 bileşen)                 │
-│ Politik Gecikme SM │ Threshold Mgr      │
-├─────────────────────────────────────────┤
-│ KATMAN 2: MBE HESAPLAMA                 │
-│ NC_forward │ NC_base │ MBE Delta        │
-│ SMA │ CostSnapshot │ Rejim parametreleri│
-├─────────────────────────────────────────┤
-│ KATMAN 1: VERİ TOPLAMA                  │
-│ Brent (yfinance) │ FX (TCMB+Yahoo)     │
-│ EPDK (XML) │ ÖTV (temporal seed)        │
-└─────────────────────────────────────────┘
+cost_base = (brent_usd × usd_try × çevrim_katsayısı + ÖTV) × (1 + KDV)
+mbe_value = (pump_price - cost_base) / cost_base × 100
 ```
+- MBE > 0: Kâr marjı yüksek (zam baskısı düşük)
+- MBE < 0: Maliyet baskısı (zam riski yüksek)
+
+### Streak-Based Sinyal Sistemi (Telegram Bot)
+- predictions_v5 tablosundan ardışık gün sinyali sayılır
+- 0 gün sinyal → Sabit (değişim beklenmiyor)
+- 1 gün → %33 olasılık
+- 2 gün ardışık → %66 olasılık
+- 3+ gün ardışık → %99 olasılık
+- Beklenen tutar = streak günlerinin first_event_amount ortalaması
 
 ---
 
 ## Geliştirme Kuralları
 
 ### Görev Yaşam Döngüsü Kaydı
-1. **İŞ ÖNCESİ**: Görev "Aktif Görevler" tablosuna `PLANLANMIŞ` durumunda eklenir
-2. **İŞ BAŞLANDIĞINDA**: Durum `DEVAM EDİYOR` olarak güncellenir
-3. **İŞ TAMAMLANDIĞINDA**: Durum `TAMAMLANDI` olarak güncellenir
-4. **SORUN ÇIKTIĞINDA**: Durum `BLOKE` olarak güncellenir
+1. **İŞ ÖNCESİ**: Görev `reports.md`'ye `PLANLANMIŞ` olarak eklenir
+2. **İŞ BAŞLANDIĞINDA**: Durum `DEVAM EDİYOR` güncellenir
+3. **İŞ TAMAMLANDIĞINDA**: Durum `TAMAMLANDI` güncellenir
+4. **SORUN ÇIKTIĞINDA**: Durum `BLOKE` güncellenir
 
 ### Çalışma Raporu Sistemi (reports.md) — ZORUNLU
-Her yapılan iş `reports.md`'ye kayıt edilir. Format:
+
+Proje üzerinde yapılan **her değişiklik** kayıt altına alınmalıdır.
+
+#### Kayıt Formatı
 ```markdown
 ## [RAPOR-XXX] Kısa Başlık
 | Alan | Değer |
 |------|-------|
-| **Durum** | 🟡 BAŞLANDI / 🔵 DEVAM EDİYOR / 🟢 TAMAMLANDI / 🔴 BAŞARISIZ |
+| **Durum** | BAŞLANDI / DEVAM EDİYOR / TAMAMLANDI / BAŞARISIZ |
 | **Başlangıç** | YYYY-MM-DD HH:MM |
+| **Bitiş** | YYYY-MM-DD HH:MM |
 | **Etkilenen Dosyalar** | dosya1.py, dosya2.py |
+
 ### Yapılanlar
 - [x] Tamamlanan adım
+### Kararlar ve Notlar
+- Neden X tercih edildi?
 ### Sonuç
 İşin son durumu.
 ```
 
 ### Tecrübe Kayıt Sistemi (experience.md) — ZORUNLU
-Her görev sonrası öğrenimler yazılır:
+
 ```markdown
 ## [Tarih] - [Kısa Başlık]
+### Görev: [Ne yapıldığı]
 - [KARAR] Ne kararı verildi → Sonuç
 - [HATA] Hangi hata → Çözüm
 - [PATTERN] Hangi yaklaşım işe yaradı → Neden
-- [UYARI] Nelere dikkat edilmeli → Neden
+- [UYARI] Dikkat edilmesi gereken → Neden
 ```
 
+### Sürekli Güncelleme Talimatları
+
+| Değişiklik Türü | Güncellenecek CLAUDE.md Bölümü |
+|-----------------|-------------------------------|
+| Yeni API endpoint | Detaylı Teknik Dokümantasyon → API |
+| Yeni ortam değişkeni | Ortam Değişkenleri |
+| Yeni bağımlılık | Ön Gereksinimler |
+| DB şema değişikliği | Veritabanı Yönetimi |
+| Yeni servis/port | Servisleri Çalıştırma |
+
+### Git & Deployment Güvenlik Kuralları
+
+**Git'e yüklenmeli:** CLAUDE.md, reports.md, experience.md, .env.example, tüm kaynak kod
+**Sunucuya gönderilmemeli:** CLAUDE.md, reports.md, experience.md (geliştirme dokümantasyonu)
+
 ### Kod Standartları
-- **Linter**: ruff (line-length: 100, target: py312)
-- **Tip Güvenliği**: Decimal zorunlu (float YASAK), Pydantic v2 modeller
-- **Async**: Tüm DB işlemleri async (asyncpg)
-- **Test**: pytest + pytest-asyncio, asyncio_mode = "auto"
-- **Import sırası**: stdlib → 3rd party → local (ruff otomatik düzenler)
-
-### ⛔ Sürekli Güncelleme Talimatları
-Bu CLAUDE.md canlı bir dokümandır. Kod değişikliği yapıp CLAUDE.md'yi güncellememek YASAKTIR.
-
-### ⛔ Git & Deployment Güvenlik Kuralları
-- `.env` → Git'e YÜKLENMEMELİ (.gitignore'da)
-- `.env.example` → Git'e yüklenir
-- `CLAUDE.md`, `reports.md`, `experience.md` → Git'e yüklenir, sunucuya deploy edilmez
-
----
-
-## Aktif Görevler
-
-| Task ID | Açıklama | Durum | Notlar |
-|---------|----------|-------|--------|
-| - | Aktif görev yok | - | - |
-
----
-
-## Tamamlanan Görevler (Özet)
-
-| Sprint | Görevler | Test |
-|--------|----------|------|
-| S0 | Yasal çerçeve (KOŞULLU GO), B2B pazar araştırması | - |
-| S1 | Brent+FX veri servisi, EPDK pompa fiyatı, ÖTV takip | 106 test |
-| S2 | MBE hesaplama motoru, Risk/Eşik motoru, Backtest pipeline, Bug fix | 178 test |
-| S3 | ML pipeline (LightGBM + SHAP + Circuit Breaker) | 396 test |
-| S4 | Telegram Bot MVP, Streamlit Dashboard, Celery Scheduler | 523 test |
-| S5 | LPG entegrasyonu, Fintech bilgi sayfası, güvenlik düzeltmesi | 531 test |
-
-**Toplam: 24 görev, 531 test PASSED, 0 fail**
+- Python 3.13, type hints zorunlu
+- Pydantic v2 şemalar (BaseModel)
+- SQLAlchemy 2.0 async session
+- Decimal kullanımı (float DEĞİL) — parasal hesaplamalar için
+- Repository pattern (her tablo için ayrı repository)
+- UPSERT idempotent yazım (tekrar çalıştırılabilirlik)
 
 ---
 
@@ -166,30 +151,32 @@ Bu CLAUDE.md canlı bir dokümandır. Kod değişikliği yapıp CLAUDE.md'yi gü
 
 | # | Açıklama | Öncelik | Durum |
 |---|----------|---------|-------|
-| 1 | ML tahmin placeholder feature kullanıyor — gerçek DB verisiyle hesaplama entegrasyonu yapılmalı | YÜKSEK | AÇIK |
-| 2 | CORS allow_origins=["*"] — production'da kısıtlanmalı | ORTA | AÇIK |
-| 3 | Celery task'larda sadece benzin/motorin tahmin — LPG ML tahmini eklenmeli | ORTA | AÇIK |
-| 4 | TCMB EVDS API key boş — FX sadece Yahoo fallback'ten geliyor | DÜŞÜK | AÇIK |
-| 5 | Faz 3 görevleri (B2B API, ödeme, RBAC, retrain pipeline) yapılmadı | GELECEK | PLANLI |
+| 1 | Celery async event loop hatası ("Event loop is closed") — asyncpg+Celery fork uyumsuzluğu | DÜŞÜK | Açık — bildirimler yine de gönderiliyor |
+| 2 | ML model AUC değerleri düşük (benzin 0.57, motorin 0.50, LPG 0.63) — veri yetersizliği | ORTA | Bekleniyor — veri biriktikçe iyileşecek |
+| 3 | v1 ML pipeline hâlâ çalışıyor (tasks.py'de) — kullanılmıyor ama kaynak harcıyor | DÜŞÜK | v1 kaldırılabilir |
+| 4 | Akşam bildirim (18:00) akşam pipeline (18:00) ile aynı saatte — sabah tahminlerini gösterir | DÜŞÜK | 19:00'e alınabilir |
+| 5 | Health check'te ml_model: False dönüyor — model dosyası yolu kontrol edilmeli | ORTA | Açık |
 
 ---
 
 ## Handoff Bilgileri
 
-### Geliştirmeye Devam Etme
-Öncelikli yapılacaklar:
-1. **ML Feature Integration**: `_get_placeholder_features()` yerine `compute_all_features()` bağlantısı (src/celery_app/tasks.py:200)
-2. **LPG ML Tahmini**: `run_daily_prediction` task'ına lpg ekle (şu an sadece benzin/motorin)
-3. **CORS Kısıtlama**: Production domain'leri belirle
-4. **Faz 3**: B2B REST API, ödeme entegrasyonu, otomatik retrain, RBAC
+### Geliştirmeye Devam Etme — Öncelikli Yapılacaklar
+1. **Model performansı iyileştirme**: Veri biriktikçe (6+ ay) modeli yeniden eğit. AUC hedefi: 0.70+
+2. **v1 ML pipeline temizliği**: tasks.py'den v1 tahmin görevlerini kaldır, gereksiz model dosyalarını sil
+3. **Akşam bildirim saatini 19:00'e al**: Akşam tahminleri hazır olduktan sonra gönderilsin
+4. **KVKK uyum paketi**: Kullanıcı veri silme endpointi, gizlilik politikası sayfası
+5. **B2B filo yönetimi modülü**: 20-100 araçlık filolar için toplu tahmin ve raporlama
 
 ### Dikkat Edilmesi Gerekenler
-- Tüm fiyat hesaplamalarında **Decimal** kullan, float YASAK
-- DB migration'larında `down_revision` gerçek hash olmalı
-- `models/__init__.py`'ye her yeni model import edilmeli (SQLAlchemy relationship resolver)
-- Celery task'larda async fonksiyonlar `asyncio.run()` wrapper ile çağrılmalı
-- EPDK XML servisi yavaş olabilir, timeout 60s+
-- Telegram bot token `.env`'de, settings.py'de boş string default
+- **Celery timezone karmaşası**: `timezone="Europe/Istanbul"` + `enable_utc=True` → crontab saatleri İstanbul saati olarak yorumlanıyor, UTC DEĞİL. Tüm saat değerlerini TSİ olarak yaz.
+- **EPDK veri çekme**: WAF koruması var, PO (Petrol Ofisi) scraping birincil kaynak. 3 katmanlı fallback: PO → Bildirim Portal → EPDK XML
+- **Python venv yolu**: `.venv/` (venv/ DEĞİL)
+- **DB portu**: 5433 (5432 DEĞİL)
+- **Streamlit portu**: 8101 (8501 DEĞİL) — PM2 show'dan kontrol et
+- **Bot dosya yolu**: `/var/www/yakit_analiz/src/telegram/` (telegram_bot DEĞİL)
+- **PM2 restart sonrası 8-10 saniye bekle** (Streamlit cold start)
+- **Sunucu timezone'u Europe/Berlin** (UTC+1), Türkiye UTC+3 — 2 saat fark
 
 ---
 
@@ -199,409 +186,274 @@ Bu CLAUDE.md canlı bir dokümandır. Kod değişikliği yapıp CLAUDE.md'yi gü
 
 | Yazılım | Minimum Versiyon | Kurulum Notu |
 |---------|-----------------|--------------|
-| Python | 3.12+ | `uv` paket yöneticisi önerilir |
-| PostgreSQL | 16+ | asyncpg driver ile |
-| Redis | 7+ | Celery broker + result backend |
-| uv | latest | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| Python | 3.12+ (mevcut: 3.13.5) | `uv` ile yönetiliyor |
+| PostgreSQL | 16 | Port 5433'te çalışıyor |
+| Redis | 7+ | Port 6379, DB 0 |
+| PM2 | 5+ | Node.js process manager |
+| uv | latest | Python paket yöneticisi (pip yerine) |
 
 ### 2. Projeyi Sıfırdan Kurma (Fresh Setup)
 
 ```bash
-# 1. Repo'yu klonla
-git clone https://github.com/FeritTasdildiren/yakit-analizi.git
-cd yakit-analizi
+# 1. Projeyi klonla
+cd /var/www
+git clone <repo-url> yakit_analiz
+cd yakit_analiz
 
-# 2. Python ortamı oluştur
-uv venv --python 3.12
+# 2. Python sanal ortam oluştur (uv ile)
+uv venv .venv
 source .venv/bin/activate
 
 # 3. Bağımlılıkları kur
-uv pip install -e ".[dev]"
+uv sync
 
 # 4. .env dosyasını oluştur
 cp .env.example .env
-# .env'deki değerleri düzenle:
-# - DATABASE_URL → gerçek PostgreSQL bağlantısı
-# - REDIS_URL → gerçek Redis bağlantısı
-# - TELEGRAM_BOT_TOKEN → BotFather'dan alınan token
-# - TCMB_EVDS_API_KEY → evds2.tcmb.gov.tr'den alınan anahtar
+# .env dosyasını düzenle: DATABASE_URL, REDIS_URL, TELEGRAM_BOT_TOKEN, TCMB_EVDS_API_KEY
 
-# 5. PostgreSQL veritabanı oluştur
-createdb yakit_analizi
+# 5. Veritabanı oluştur
+createdb -p 5433 yakit_analizi
+psql -p 5433 -c "CREATE USER yakit_analizi WITH PASSWORD 'yakit2026secure';"
+psql -p 5433 -c "GRANT ALL PRIVILEGES ON DATABASE yakit_analizi TO yakit_analizi;"
 
 # 6. Migration'ları çalıştır
 alembic upgrade head
 
-# 7. Seed data (ÖTV oranları)
-python -c "
-from src.data_collectors.tax_seed import seed_tax_parameters
-import asyncio
-asyncio.run(seed_tax_parameters())
-"
+# 7. Seed data (başlangıç verileri)
+python3 scripts/backfill_historical_data.py  # Tarihi pompa fiyatları
+python3 scripts/rebuild_derived_tables.py     # MBE, risk, cost_base hesapla
 
-# 8. Testleri çalıştır
-uv run pytest tests/ -q
-# Beklenen: 531 passed
+# 8. ML modellerini eğit
+python3 train_v5_po.py  # ~45 dakika sürer, 9 model (3 yakıt × 3 stage)
+
+# 9. PM2 ile başlat
+pm2 start ecosystem.config.js
+pm2 save
 ```
 
 ### 3. Ortam Değişkenleri (Environment Variables)
 
-| Değişken | Açıklama | Örnek Değer | Zorunlu? |
-|----------|----------|-------------|----------|
-| `DATABASE_URL` | PostgreSQL async bağlantısı | `postgresql+asyncpg://user:pass@localhost:5432/yakit_analizi` | EVET |
-| `REDIS_URL` | Redis bağlantısı | `redis://localhost:6379/0` | EVET |
-| `TELEGRAM_BOT_TOKEN` | Telegram Bot API token | `8402077908:AAG4-Hjp...` | EVET (bot için) |
-| `TCMB_EVDS_API_KEY` | TCMB EVDS API anahtarı | `abc123...` | HAYIR (Yahoo fallback var) |
-| `TELEGRAM_DAILY_NOTIFICATION_HOUR` | Bildirim saati (UTC) | `7` | HAYIR (default: 7) |
-| `DATA_FETCH_HOUR` | Veri çekme saati (UTC) | `18` | HAYIR (default: 18) |
-| `PREDICTION_HOUR` | ML tahmin saati (UTC) | `18` | HAYIR (default: 18) |
-| `PREDICTION_MINUTE` | ML tahmin dakikası | `30` | HAYIR (default: 30) |
-| `NOTIFICATION_HOUR` | Bildirim saati (UTC) | `7` | HAYIR (default: 7) |
-| `RETRY_COUNT` | Yeniden deneme sayısı | `3` | HAYIR (default: 3) |
-| `RETRY_BACKOFF` | Yeniden deneme bekleme çarpanı | `2.0` | HAYIR (default: 2.0) |
+| Değişken | Açıklama | Örnek Değer | Zorunlu |
+|----------|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL async bağlantı | `postgresql+asyncpg://yakit_analizi:yakit2026secure@localhost:5433/yakit_analizi` | Evet |
+| `REDIS_URL` | Redis bağlantı | `redis://localhost:6379/0` | Evet |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot API token | `7xxx:AAHxxx` | Evet |
+| `TCMB_EVDS_API_KEY` | TCMB EVDS döviz kuru API anahtarı | `xxx` | Hayır (fallback var) |
+| `DATA_FETCH_HOUR` | Akşam veri toplama saati (TSİ) | `18` | Hayır (default: 18) |
+| `PREDICTION_HOUR` | Akşam tahmin saati (TSİ) | `18` | Hayır (default: 18) |
+| `PREDICTION_MINUTE` | Akşam tahmin dakikası | `30` | Hayır (default: 30) |
+| `NOTIFICATION_HOUR` | Sabah bildirim saati (TSİ) | `10` | Hayır (default: 10) |
+| `MORNING_DATA_FETCH_HOUR` | Sabah veri toplama saati (TSİ) | `8` | Hayır (default: 8) |
+| `MORNING_PREDICTION_HOUR` | Sabah tahmin saati (TSİ) | `8` | Hayır (default: 8) |
+| `MORNING_PREDICTION_MINUTE` | Sabah tahmin dakikası | `30` | Hayır (default: 30) |
+| `TELEGRAM_DAILY_NOTIFICATION_HOUR` | Sabah Telegram bildirimi (TSİ) | `10` | Hayır (default: 10) |
+| `TELEGRAM_EVENING_NOTIFICATION_HOUR` | Akşam Telegram bildirimi (TSİ) | `18` | Hayır (default: 18) |
 
 ### 4. Veritabanı Yönetimi
 
-#### Migration'lar
-```bash
-# Tüm migration'ları uygula
-alembic upgrade head
-
-# 1 adım geri al
-alembic downgrade -1
-
-# Yeni migration oluştur
-alembic revision --autogenerate -m "Açıklama"
-
-# Migration durumunu kontrol et
-alembic current
-alembic history
+#### Bağlantı Bilgileri
+```
+Host: localhost
+Port: 5433
+DB: yakit_analizi
+User: yakit_analizi
+Password: yakit2026secure
+URL: postgresql://yakit_analizi:yakit2026secure@localhost:5433/yakit_analizi
 ```
 
-#### Migration Zinciri
-```
-001_create_enums_and_daily_market_data
-  ↓
-002_create_tax_parameters
-  ↓
-003_create_computation_tables (mbe_calculations, cost_base_snapshots, price_changes)
-  ↓
-004_create_risk_threshold_tables (risk_scores, alerts, regime_events, political_delay, threshold_config)
-  ↓
-005_create_ml_prediction_tables
-  ↓
-006_create_telegram_users
-```
+#### Tablolar (15 tablo)
 
-#### DB Tabloları (12 adet)
 | Tablo | Açıklama |
 |-------|----------|
-| `daily_market_data` | Brent, USD/TRY, CIF Med, pompa fiyatı |
-| `tax_parameters` | ÖTV, KDV — temporal (valid_from/valid_to) |
-| `mbe_calculations` | MBE değeri, SMA, trend, rejim |
-| `cost_base_snapshots` | Maliyet ayrıştırma (CIF, ÖTV, KDV, marj) |
-| `price_changes` | Pompa fiyat değişiklikleri |
-| `risk_scores` | Bileşik risk skoru (5 bileşen) |
-| `ml_predictions` | LightGBM tahminleri + SHAP |
-| `alerts` | Sistem uyarıları |
-| `regime_events` | Rejim olayları (seçim, kriz, vergi) |
-| `political_delay_history` | Politik gecikme günleri |
+| `daily_market_data` | Günlük piyasa verileri (Brent, FX, pompa fiyatı) |
+| `price_changes` | Fiyat değişim geçmişi |
+| `tax_parameters` | ÖTV oranları (yakıt tipi bazında) |
 | `threshold_config` | Risk eşik konfigürasyonu |
-| `telegram_users` | Telegram bot kullanıcıları |
+| `cost_base_snapshots` | Maliyet tabanı snapshot'ları |
+| `mbe_calculations` | MBE hesaplamaları |
+| `risk_scores` | Risk skorları |
+| `ml_predictions` | v1 ML tahminleri |
+| `predictions_v5` | v5 ML tahminleri (aktif) |
+| `feature_snapshots_v5` | v5 feature snapshot'ları |
+| `regime_events` | Rejim olayları |
+| `political_delay_history` | Politik gecikme geçmişi |
+| `alerts` | Alarm kayıtları |
+| `telegram_users` | Telegram kullanıcıları |
+| `alembic_version` | Migration versiyon takibi |
+
+#### Migration Komutları
+```bash
+alembic upgrade head          # Tüm migration'ları çalıştır
+alembic revision -m "açıklama" # Yeni migration oluştur
+alembic downgrade -1           # Son migration'ı geri al
+```
 
 ### 5. Servisleri Çalıştırma
 
-#### Geliştirme Ortamı
+#### PM2 ile (Production)
 ```bash
-# Terminal 1: FastAPI (+ Telegram Bot otomatik başlar)
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
-
-# Terminal 2: Celery Worker
-celery -A src.celery_app.celery_config worker -l info
-
-# Terminal 3: Celery Beat (zamanlayıcı)
-celery -A src.celery_app.celery_config beat -l info
-
-# Terminal 4: Streamlit Dashboard
-cd dashboard && streamlit run app.py --server.port 8501
+pm2 start ecosystem.config.js    # Tüm servisleri başlat
+pm2 status                        # Durum kontrol
+pm2 restart yakit-api yakit-celery yakit-dashboard  # Restart
+pm2 logs yakit-celery --lines 50  # Log izle
 ```
 
-#### Üretim Ortamı
+#### Manuel Çalıştırma (Development)
 ```bash
-# FastAPI (gunicorn ile)
-gunicorn src.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+# API
+uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Celery Worker + Beat (tek komut)
-celery -A src.celery_app.celery_config worker -B -l info -c 4
+# Celery
+celery -A src.celery_app.celery_config:celery_app worker -B -l info -Q default,notifications
 
 # Dashboard
-streamlit run dashboard/app.py --server.port 8501 --server.headless true
+streamlit run dashboard/app.py --server.port 8101 --server.address 0.0.0.0
 ```
 
 #### Port Haritası
 | Servis | Port | URL |
 |--------|------|-----|
-| FastAPI API | 8000 | http://localhost:8000 |
-| API Docs (Swagger) | 8000 | http://localhost:8000/docs |
-| API Docs (ReDoc) | 8000 | http://localhost:8000/redoc |
-| Streamlit Dashboard | 8501 | http://localhost:8501 |
-| Telegram Bot | - | @yakithaber_bot (polling) |
-| PostgreSQL | 5432 | localhost |
-| Redis | 6379 | localhost |
+| FastAPI | 8000 | http://localhost:8000 |
+| Streamlit Dashboard | 8101 | http://localhost:8101 |
+| PostgreSQL | 5433 | localhost:5433 |
+| Redis | 6379 | localhost:6379 |
 
-### 6. API Dokümantasyonu (55 Endpoint)
+### 6. API Dokümantasyonu (58 endpoint)
 
-#### Sistem
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/health` | Sağlık kontrolü |
-| GET | `/` | API bilgi |
+| Grup | Prefix | Endpoint Sayısı | Açıklama |
+|------|--------|-----------------|----------|
+| Market Data | `/api/v1/market-data` | 4 | Günlük piyasa verileri |
+| MBE | `/api/v1/mbe` | 5 | Maliyet Baz Etkisi |
+| Risk | `/api/v1/risk` | 4 | Risk skorları |
+| Price Changes | `/api/v1/price-changes` | 3 | Fiyat değişimleri |
+| Tax | `/api/v1/tax` | 6 | ÖTV parametreleri |
+| ML v1 | `/api/v1/ml` | 6 | v1 tahminleri |
+| Predictor v5 | `/api/v1/predictor-v5` | 5 | v5 tahminleri (aktif) |
+| Backtest | `/api/v1/backtest` | 3 | Backtest sonuçları |
+| Alerts | `/api/v1/alerts` | 4 | Alarm yönetimi |
+| Regime | `/api/v1/regime` | 4 | Rejim olayları |
+| Delay | `/api/v1/delay` | 3 | Politik gecikme |
+| EPDK | `/api/v1/epdk` | 4 | EPDK veri çekme |
+| Telegram | `/api/v1/telegram` | 6 | Kullanıcı yönetimi |
 
-#### Piyasa Verisi (`/api/v1/market-data`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/latest` | En güncel piyasa verisi |
-| GET | `/{target_date}` | Tarih bazlı veri |
-| POST | `/fetch` | Brent/FX verisi çek (admin) |
-| GET | `/gaps` | Veri boşluğu raporu |
-
-#### MBE (`/api/v1/mbe`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/latest` | Tüm yakıt MBE |
-| GET | `/latest/{fuel_type}` | Yakıt bazlı MBE |
-| GET | `/range/{fuel_type}` | Tarih aralığı MBE |
-| GET | `/snapshot/{snapshot_date}` | Maliyet decomposition |
-| POST | `/calculate` | MBE hesapla (admin) |
-
-#### Risk (`/api/v1/risk`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/latest` | Tüm yakıt risk skoru |
-| GET | `/latest/{fuel_type}` | Yakıt bazlı risk |
-| GET | `/range/{fuel_type}` | Tarih aralığı risk |
-| POST | `/calculate` | Risk hesapla |
-
-#### ML Tahmin (`/api/v1/ml`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| POST | `/predict` | Fiyat değişim tahmini |
-| POST | `/train` | Model eğit |
-| GET | `/model-info` | Model versiyonu |
-| GET | `/health` | Circuit breaker durumu |
-| GET | `/explain/{prediction_id}` | SHAP açıklama |
-| GET | `/backtest-performance` | Accuracy metrikleri |
-
-#### Fiyat Değişim (`/api/v1/price-changes`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/latest` | Son fiyat değişimi |
-| GET | `/{fuel_type}` | Yakıt bazlı |
-| POST | `/` | Yeni kayıt |
-
-#### Vergi (`/api/v1/taxes`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/current` | Güncel vergi |
-| GET | `/current/{fuel_type}` | Yakıt bazlı vergi |
-| GET | `/at-date/{ref_date}` | Tarih bazlı |
-| GET | `/history/{fuel_type}` | Vergi geçmişi |
-| POST | `/` | Yeni vergi (admin) |
-
-#### Alert (`/api/v1/alerts`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/` | Alert listesi |
-| GET | `/{fuel_type}` | Yakıt bazlı alert |
-| PUT | `/{alert_id}/read` | Okundu işaretle |
-| PUT | `/{alert_id}/resolve` | Çözüldü işaretle |
-
-#### Rejim (`/api/v1/regime`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/active` | Aktif rejimler |
-| GET | `/history` | Rejim geçmişi |
-| POST | `/` | Rejim oluştur |
-| PUT | `/{event_id}/deactivate` | Rejimi kapat |
-
-#### Backtest (`/api/v1/backtest`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/scenarios` | Senaryoları listele |
-| POST | `/run` | Backtest çalıştır |
-| GET | `/report` | Rapor |
-
-#### Gecikme (`/api/v1/delays`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/pending` | Bekleyen gecikmeler |
-| GET | `/history/{fuel_type}` | Gecikme geçmişi |
-| GET | `/stats/{fuel_type}` | İstatistikler |
-
-#### Telegram Admin (`/api/v1/telegram`)
-| Method | Path | Açıklama |
-|--------|------|----------|
-| GET | `/users` | Kullanıcı listesi |
-| POST | `/users/{id}/approve` | Onayla |
-| POST | `/users/{id}/reject` | Reddet |
-| GET | `/stats` | İstatistikler |
-| POST | `/broadcast` | Toplu mesaj |
+#### Önemli Endpoint'ler
+```bash
+curl http://localhost:8000/api/v1/predictor-v5/latest           # Güncel v5 tahminler
+curl http://localhost:8000/api/v1/predictor-v5/history?fuel_type=benzin&days=30
+curl -X POST http://localhost:8000/api/v1/predictor-v5/retrain  # Model yeniden eğitim
+curl http://localhost:8000/health                                # Sağlık kontrolü
+curl http://localhost:8000/api/v1/mbe/history?fuel_type=benzin&days=30
+```
 
 ### 7. Proje Klasör Yapısı
 
 ```
-yakit-analizi/
+/var/www/yakit_analiz/
+├── .env, .env.example            # Ortam değişkenleri
+├── ecosystem.config.js           # PM2 konfigürasyonu
+├── pyproject.toml               # Bağımlılıklar (uv)
+├── alembic.ini                  # Alembic konfigürasyonu
+├── _alembic_migrations/versions/ # 7 migration + 1 merge
 ├── src/
-│   ├── main.py                      # FastAPI app + lifespan
-│   ├── config/
-│   │   ├── settings.py              # Pydantic Settings (.env)
-│   │   └── database.py              # Async PostgreSQL engine
-│   ├── api/                         # 12 router dosyası (55 endpoint)
-│   │   ├── market_data_routes.py
-│   │   ├── mbe_routes.py
-│   │   ├── price_change_routes.py
-│   │   ├── risk_routes.py
-│   │   ├── regime_routes.py
-│   │   ├── alert_routes.py
-│   │   ├── delay_routes.py
-│   │   ├── backtest_routes.py
-│   │   ├── ml_routes.py
-│   │   ├── epdk_routes.py
-│   │   ├── tax_routes.py
-│   │   └── telegram_admin_routes.py
-│   ├── models/                      # SQLAlchemy ORM (12 tablo)
-│   │   ├── base.py                  # Base + fuel_type_enum
-│   │   ├── __init__.py              # Tüm model import'ları (ZORUNLU)
-│   │   ├── market_data.py
-│   │   ├── tax_parameters.py
-│   │   ├── mbe_calculations.py
-│   │   ├── cost_base_snapshots.py
-│   │   ├── price_changes.py
-│   │   ├── risk_scores.py
-│   │   ├── ml_predictions.py
-│   │   ├── alerts.py
-│   │   ├── regime_events.py
-│   │   ├── political_delay_history.py
-│   │   ├── threshold_config.py
-│   │   └── users.py                 # TelegramUser
-│   ├── core/                        # Business logic
-│   │   ├── mbe_calculator.py        # MBE hesaplama (Decimal)
-│   │   ├── risk_engine.py           # Risk skoru (5 bileşen)
-│   │   ├── political_delay_tracker.py # State machine
-│   │   ├── threshold_manager.py     # Hysteresis
-│   │   └── *_repository.py          # 7 repository
-│   ├── data_collectors/             # Katman 1 veri toplama
-│   │   ├── brent_collector.py       # yfinance + fallback
-│   │   ├── fx_collector.py          # TCMB EVDS + Yahoo
-│   │   ├── epdk_collector.py        # EPDK XML (sorguNo=72)
-│   │   ├── tax_seed.py             # ÖTV/KDV seed verileri
-│   │   └── validators.py
-│   ├── ml/                          # Katman 4 ML
-│   │   ├── feature_engineering.py   # 47 feature
-│   │   ├── trainer.py              # LightGBM eğitim
-│   │   ├── predictor.py            # Singleton predictor
-│   │   ├── circuit_breaker.py      # CLOSED/OPEN/HALF_OPEN
-│   │   └── explainability.py       # SHAP
-│   ├── telegram/                    # Katman 5 Bot
-│   │   ├── bot.py                  # Application factory
-│   │   ├── handlers.py            # /rapor, /iptal, /yardim
-│   │   ├── registration.py        # ConversationHandler (/start)
-│   │   ├── notifications.py       # Günlük bildirim + broadcast
-│   │   └── schemas.py             # Pydantic v2 şemaları
-│   ├── celery_app/                  # Task queue
-│   │   ├── celery_config.py
-│   │   ├── beat_schedule.py
-│   │   └── tasks.py               # 4 periyodik görev
-│   ├── backtest/                    # Backtest motoru
-│   └── repositories/               # ML + Telegram repo'ları
-├── dashboard/                       # Streamlit arayüzü
-│   ├── app.py                      # Ana sayfa
-│   ├── pages/
-│   │   ├── 01_📊_Genel_Bakis.py   # MBE gauge, trendler
-│   │   ├── 02_📈_ML_Tahminler.py  # Tahmin olasılıkları, SHAP
-│   │   ├── 03_🔥_Risk_Analizi.py  # Risk skorları, rejimler
-│   │   ├── 04_👥_Kullanici_Yonetimi.py # Telegram kullanıcı yönetimi
-│   │   ├── 05_⚙️_Sistem.py       # Servis durumu, circuit breaker
-│   │   └── 06_💰_Fintech_Tasarruf.py # Tasarruf hesaplayıcı
-│   ├── components/
-│   │   ├── charts.py              # Plotly grafikleri
-│   │   └── data_fetcher.py        # Async DB + cache
-│   └── requirements.txt
-├── alembic/                         # Migration'lar
-│   ├── env.py                      # Async migration runner
-│   └── versions/                   # 6 migration
-├── tests/                           # 25+ test dosyası (531 test)
-├── Arsiv-Planlama/                  # Planlama dokümanları
-├── pyproject.toml                   # Bağımlılıklar + ruff + pytest
-├── alembic.ini
-├── .env                            # Ortam değişkenleri (GIT'E YÜKLENMEMELİ)
-├── .env.example                    # Örnek ortam değişkenleri
-├── .gitignore
-├── CLAUDE.md                       # Bu dosya
-├── reports.md                      # İş kayıtları
-└── experience.md                   # Tecrübe bankası
+│   ├── main.py                  # FastAPI entry point
+│   ├── api/                     # 14 route dosyası, 58 endpoint
+│   ├── config/                  # database.py + settings.py
+│   ├── core/                    # MBE, risk, threshold, political delay
+│   ├── data_collectors/         # Brent, FX, EPDK collector'ları
+│   ├── models/                  # 15 SQLAlchemy model
+│   ├── repositories/            # Repository pattern
+│   ├── ml/                      # v1 ML pipeline
+│   ├── predictor_v5/            # v5 ML pipeline (aktif, 12 modül)
+│   ├── celery_app/              # Celery config + 14 periyodik görev
+│   ├── telegram/                # Bot + handlers + notifications
+│   └── backtest/                # v1 backtest
+├── dashboard/                   # Streamlit (6 sayfa)
+├── models/v5/                   # Aktif ML modeller (12 joblib)
+├── scripts/                     # Yardımcı script'ler
+├── tests/                       # 30+ test dosyası
+└── data/                        # CSV, SQL backup
 ```
 
-### 8. Üçüncü Parti Servisler ve Entegrasyonlar
+### 8. Üçüncü Parti Servisler
 
-| Servis | Amaç | Credential Notu |
-|--------|------|-----------------|
-| PostgreSQL | Ana veritabanı | `.env` → DATABASE_URL |
-| Redis | Celery broker + result backend | `.env` → REDIS_URL |
-| TCMB EVDS API | USD/TRY döviz kuru | `.env` → TCMB_EVDS_API_KEY (opsiyonel) |
-| Yahoo Finance (yfinance) | Brent petrol + FX fallback | API key gerektirmez |
-| EPDK XML Web Service | Pompa fiyatları (sorguNo=72) | API key gerektirmez, kamuya açık |
-| Telegram Bot API | @yakithaber_bot | `.env` → TELEGRAM_BOT_TOKEN |
+| Servis | Amaç | Credential |
+|--------|------|------------|
+| Yahoo Finance | Brent petrol fiyatı | Gerekmez |
+| TCMB EVDS | USD/TRY döviz kuru | `TCMB_EVDS_API_KEY` |
+| Petrol Ofisi (PO) | Pompa fiyatları (scraping) | Gerekmez |
+| EPDK | Yedek pompa fiyatı | Gerekmez |
+| Telegram Bot API | Kullanıcı bildirimleri | `TELEGRAM_BOT_TOKEN` |
+| Redis | Celery broker | Local, credential yok |
 
-### 9. Test Stratejisi
+### 9. Celery Zamanlama (TSİ)
 
-```bash
-# Tüm testleri çalıştır
-uv run pytest tests/ -q
+| Saat | Görev |
+|------|-------|
+| 08:00 | Sabah veri toplama |
+| 08:10-08:20 | Sabah MBE + risk |
+| 08:30-08:35 | Sabah v1+v5 tahmin |
+| **10:00** | **Sabah Telegram bildirimi** |
+| 18:00 | Akşam veri toplama + **akşam bildirimi** |
+| 18:10-18:20 | Akşam MBE + risk |
+| 18:30-18:35 | Akşam v1+v5 tahmin |
+| */30 dk | Sağlık kontrolü |
 
-# Belirli bir modülü test et
-uv run pytest tests/test_mbe_calculator.py -v
-
-# Coverage raporu
-uv run pytest tests/ --cov=src --cov-report=html
-```
-
-**Test dağılımı:**
-- Veri toplama testleri (Brent, FX, EPDK, ÖTV)
-- MBE hesaplama testleri (8 LPG testi dahil)
-- Risk motoru testleri
-- Backtest testleri
-- ML pipeline testleri
-- Telegram bot testleri (kayıt, komutlar, bildirim, admin API)
-- Dashboard testleri
-
-### 10. Deployment (Yayına Alma)
+### 10. Deployment
 
 #### Sunucu Bilgileri
 | Alan | Değer |
 |------|-------|
-| Domain | ferittasdildiren.com |
-| Proje Yolu | /var/www/yakit_analiz/ |
-| SSH | `ssh root@157.173.116.230` |
+| Host | 157.173.116.230 |
+| SSH | `ssh root@157.173.116.230` (şifre: E3Ry8H#bWkMGJc6y) |
+| Web Panel | https://cloud.skystonetech.com (admin / SFj353!*?dd) |
+| Sunucu Timezone | Europe/Berlin (CET, UTC+1) |
+| Proje Yolu | `/var/www/yakit_analiz/` |
+
+#### Deployment Adımları
+```bash
+ssh root@157.173.116.230
+cd /var/www/yakit_analiz
+git pull                          # Değişiklikleri çek
+source .venv/bin/activate
+uv sync                           # Bağımlılık güncelle
+alembic upgrade head              # Migration (varsa)
+pm2 restart yakit-api yakit-celery yakit-dashboard
+sleep 10 && pm2 status            # Kontrol
+```
 
 ### 11. Sık Karşılaşılan Sorunlar
 
-| Sorun | Olası Neden | Çözüm |
-|-------|-------------|-------|
-| DB bağlantı hatası | PostgreSQL çalışmıyor | `systemctl start postgresql` |
-| Celery task çalışmıyor | Redis çalışmıyor | `systemctl start redis` |
-| ML model yüklenemedi | İlk kez çalışıyor, model yok | `POST /api/v1/ml/train` ile eğit |
-| Telegram bot başlamıyor | Token boş/yanlış | `.env`'deki TELEGRAM_BOT_TOKEN kontrol et |
-| EPDK verisi alınamadı | Devlet servisi yavaş/kapalı | Timeout 60s+, sonraki çekmede yeniden dener |
-| Import hatası (relationship) | Yeni model __init__.py'ye eklenmemiş | `src/models/__init__.py`'ye import ekle |
-| numba/llvmlite hatası | Python sürüm uyumsuzluğu | `numba>=0.60.0` olmalı |
-| LightGBM macOS hatası | libomp eksik | `brew install libomp` |
+| Sorun | Çözüm |
+|-------|-------|
+| DB bağlantı hatası | Port 5433 kullan (5432 DEĞİL) |
+| ModuleNotFoundError | `source .venv/bin/activate` (.venv/ venv/ DEĞİL) |
+| EPDK 418 hatası | PO fallback otomatik devreye girer |
+| Bot cevap vermiyor | `pm2 restart yakit-api` |
+| Streamlit 404 | Port 8101 (8501 DEĞİL) |
+| Celery saat yanlış | Saatleri TSİ yaz (enable_utc+Istanbul=TSİ yorumlanır) |
+| PM2 sonrası erişilemez | 8-10 saniye bekle |
 
-### 12. Celery Beat Zamanlama
+### 12. Geliştirme İpuçları
 
-| Görev | Zamanlama | UTC | TSİ (UTC+3) |
-|-------|-----------|-----|-------------|
-| Veri Toplama (Brent, FX, EPDK) | Her gün | 18:00 | 21:00 |
-| ML Tahmin | Her gün | 18:30 | 21:30 |
-| Günlük Bildirim | Her gün | 07:00 | 10:00 |
-| Sağlık Kontrolü | Her 30 dk | */30 | */30 |
+- **Dosya değişikliği**: Base64 encoded Python exact-string-replace kullan
+- **Model yeniden eğitim**: `python3 train_v5_po.py` (~45 dk)
+- **Derived tablolar**: `python3 scripts/rebuild_derived_tables.py`
+- **Log izleme**: `pm2 logs yakit-celery --lines 100`
+
+---
+
+## İşlem Geçmişi (Özet)
+
+| Sprint | Tarih | Açıklama | Görev |
+|--------|-------|----------|-------|
+| S0 | 15 Şub | Yasal çerçeve + B2B pazar araştırması | 2 |
+| S1 | 16 Şub | Katman 1 — Veri Toplama | 3 |
+| S2 | 16 Şub | Katman 2+3 — MBE + Risk + Backtest | 3 |
+| S3 | 16 Şub | Katman 4 — ML | 1 |
+| S4 | 16 Şub | Katman 5 — Bot + Dashboard + Celery | 3 |
+| S5-S6 | 16 Şub | Güvenlik + Veri Aktivasyonu | 6 |
+| S7-S9 | 17 Şub | UI/UX + Bug fix'ler | 9 |
+| S11 | 17-18 Şub | ML Predictor v5 (7 dalga) | 14 |
+| S12-S15 | 18-19 Şub | Dashboard v5 + Kalibrasyon + PO Rebuild | 12 |
+| S16-S21 | 19-20 Şub | ML perf + Telegram refactor + Celery fix | 11 |
+| **TOPLAM** | **5 gün** | **80 görev, 21 sprint** | **80** |

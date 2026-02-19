@@ -6,7 +6,7 @@ Tüm endpoint'ler /api/v1/market-data prefix'i altındadır.
 """
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -44,8 +44,8 @@ class MarketDataResponse(BaseModel):
     distribution_margin_tl: Decimal | None = None
     data_quality_flag: str
     source: str
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 
