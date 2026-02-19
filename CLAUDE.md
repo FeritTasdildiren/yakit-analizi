@@ -34,6 +34,7 @@
 | **Son Güncelleme** | 2026-02-20 |
 | **Toplam Görev** | 80 (TASK-001 ~ TASK-080) |
 | **Toplam Sprint** | 21 (S0 ~ S21) |
+| **GitHub** | https://github.com/FeritTasdildiren/yakit-analizi |
 
 ---
 
