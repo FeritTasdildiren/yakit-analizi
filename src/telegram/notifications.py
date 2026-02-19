@@ -4,6 +4,8 @@ Gunluk bildirim sistemi.
 Aktif ve onaylanmis kullanicilara gunluk yakit raporu gonderir.
 Rate limiting ile Telegram API limitlerini asmayi onler.
 Hata yonetimi: Mesaj gonderilemezse kullaniciyi deaktif eder.
+
+v2: Streak-based bildirim — predictions_v5'ten ardisik gun sinyali.
 """
 
 import asyncio
@@ -18,10 +20,7 @@ from src.repositories.telegram_repository import (
     deactivate_user,
     get_active_approved_users,
 )
-from src.telegram.handlers import (
-    _fetch_report_data,
-    format_daily_notification,
-)
+from src.telegram.handlers import format_daily_notification
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +38,9 @@ async def send_daily_notifications(bot: Bot | None = None) -> dict:
     """
     Tum aktif ve onaylanmis kullanicilara gunluk bildirim gonderir.
 
+    Streak-based format: format_daily_notification() async olarak
+    predictions_v5'ten veri ceker ve kisa bildirim olusturur.
+
     Args:
         bot: Telegram Bot instance. None ise yeni olusturulur.
 
@@ -48,11 +50,8 @@ async def send_daily_notifications(bot: Bot | None = None) -> dict:
     if bot is None:
         bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 
-    # Rapor verisini topla (tum kullanicilar icin ayni)
-    benzin_data = await _fetch_report_data("benzin")
-    motorin_data = await _fetch_report_data("motorin")
-
-    message_text = format_daily_notification(benzin_data, motorin_data)
+    # Streak-based bildirim mesajini olustur (tum kullanicilar icin ayni)
+    message_text = await format_daily_notification()
 
     # Hedef kullanicilari al
     async with async_session_factory() as session:

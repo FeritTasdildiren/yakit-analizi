@@ -65,6 +65,15 @@ async def create_bot_application() -> Application:
     app.add_handler(CommandHandler("iptal", iptal_command))
     app.add_handler(CommandHandler("yardim", yardim_command))
 
+    # ── "📊 Rapor İste" buton handler'i ──
+    # ConversationHandler DISINDA — sabit buton tiklandiginda rapor gonderir
+    app.add_handler(
+        MessageHandler(
+            filters.Regex("^📊 Rapor İste$"),
+            rapor_command,
+        )
+    )
+
     logger.info("Telegram Bot handler'lari kaydedildi")
 
     return app
