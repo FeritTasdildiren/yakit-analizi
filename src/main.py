@@ -22,6 +22,7 @@ from src.api.delay_routes import router as delay_router
 from src.api.backtest_routes import router as backtest_router
 from src.api.ml_routes import router as ml_router
 from src.api.telegram_admin_routes import router as telegram_admin_router
+from src.api.predictor_v5_routes import router as predictor_v5_router
 from src.config.database import dispose_engine
 
 # --- Loglama Ayarları ---
@@ -127,6 +128,7 @@ app.include_router(delay_router)
 app.include_router(backtest_router)
 app.include_router(ml_router)
 app.include_router(telegram_admin_router)
+app.include_router(predictor_v5_router)
 
 
 # --- Health Check ---

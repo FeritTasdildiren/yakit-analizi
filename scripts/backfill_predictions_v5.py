@@ -476,22 +476,49 @@ def phase1_train_models(dry_run: bool = False) -> dict[str, dict]:
 
                 try:
                     from src.predictor_v5.calibration import auto_calibrate
-                    calibrator = auto_calibrate(cv_y, cv_p)
+
+                    # CV verilerini train/val olarak %70/%30 ayır
+                    n_cv = len(cv_y)
+                    n_train_cal = max(int(n_cv * 0.7), 2)
+                    # Shuffle indeks (deterministik, fuel_type hash seed)
+                    rng_cal = np.random.RandomState(hash(fuel_type) % (2**31))
+                    idx_shuf = rng_cal.permutation(n_cv)
+                    idx_train_cal = idx_shuf[:n_train_cal]
+                    idx_val_cal = idx_shuf[n_train_cal:]
+
+                    # Val kümesi boşsa tüm veriyi hem train hem val olarak kullan
+                    if len(idx_val_cal) == 0:
+                        idx_val_cal = idx_train_cal
+
+                    cal_result = auto_calibrate(
+                        cv_p[idx_train_cal], cv_y[idx_train_cal],
+                        cv_p[idx_val_cal], cv_y[idx_val_cal],
+                    )
+                    # auto_calibrate (calibrator, metrics_dict) tuple döndürür
+                    if isinstance(cal_result, tuple):
+                        calibrator = cal_result[0]
+                    else:
+                        calibrator = cal_result
                     logger.info("[%s] Kalibrasyon tamamlandı (v5 auto_calibrate)", fuel_type)
                 except (ImportError, Exception) as e:
                     logger.warning(
-                        "[%s] v5 auto_calibrate başarısız: %s — sklearn IsotonicRegression ile devam",
+                        "[%s] v5 auto_calibrate başarısız: %s — PlattCalibrator fallback",
                         fuel_type, e,
                     )
                     try:
-                        from sklearn.isotonic import IsotonicRegression
-                        calibrator = IsotonicRegression(
-                            y_min=0.0, y_max=1.0, out_of_bounds="clip"
-                        )
+                        from src.predictor_v5.calibration import PlattCalibrator
+                        calibrator = PlattCalibrator()
                         calibrator.fit(cv_p, cv_y)
-                        logger.info("[%s] Kalibrasyon tamamlandı (IsotonicRegression)", fuel_type)
+                        logger.info("[%s] Kalibrasyon tamamlandı (PlattCalibrator fallback)", fuel_type)
                     except Exception as e2:
-                        logger.warning("[%s] Kalibrasyon başarısız: %s", fuel_type, e2)
+                        logger.warning("[%s] Platt fallback da başarısız: %s — BetaCalibrator deneniyor", fuel_type, e2)
+                        try:
+                            from src.predictor_v5.calibration import BetaCalibrator
+                            calibrator = BetaCalibrator()
+                            calibrator.fit(cv_p, cv_y)
+                            logger.info("[%s] Kalibrasyon tamamlandı (BetaCalibrator fallback)", fuel_type)
+                        except Exception as e3:
+                            logger.warning("[%s] Tüm kalibrasyon yöntemleri başarısız: %s", fuel_type, e3)
 
             # ── 8. Modelleri kaydet ──
             logger.info("[%s] Modeller kaydediliyor...", fuel_type)

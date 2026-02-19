@@ -103,9 +103,9 @@ async def _calculate_streak(fuel_type: str) -> dict:
     ardisik sinyal (streak) hesaplar.
 
     Streak kurallari:
-    - first_event_direction = 0 VEYA first_event_amount = 0 → sinyal yok
-    - first_event_direction = 1 ve first_event_amount > 0 → zam sinyali
-    - first_event_direction = -1 → indirim sinyali
+    - first_event_amount = 0.00 veya first_event_type = None → sinyal yok
+    - first_event_type = "artis" ve first_event_amount > 0 → zam sinyali
+    - first_event_type = "dusus" → indirim sinyali
     - Bugunden geriye dogru ARDISIK ayni yonlu sinyal sayilir
     - Yon degisirse veya sinyal yoksa streak kesilir
 
@@ -127,8 +127,7 @@ async def _calculate_streak(fuel_type: str) -> dict:
     async with async_session_factory() as session:
         try:
             query = text("""
-                SELECT run_date, first_event_direction, first_event_amount,
-                       first_event_type
+                SELECT run_date, first_event_type, first_event_amount
                 FROM predictions_v5
                 WHERE fuel_type = :fuel_type
                 ORDER BY run_date DESC
@@ -154,14 +153,14 @@ async def _calculate_streak(fuel_type: str) -> dict:
     amounts: list[float] = []
 
     for row in records:
-        direction = int(row["first_event_direction"] or 0)
+        event_type = row["first_event_type"] or None
         amount = float(row["first_event_amount"] or 0)
 
         # Sinyal yok → streak kesilir
-        if direction == 0 or amount == 0.0:
+        if event_type is None or amount == 0.0:
             break
 
-        current_dir = "artis" if direction == 1 else "dusus"
+        current_dir = event_type  # "artis" veya "dusus"
 
         # İlk gün — streak yönünü belirle
         if streak_direction is None:
@@ -273,7 +272,7 @@ def _format_fuel_streak(
 
     # Gün açıklaması
     if streak_count >= 3:
-        gun_str = f"{streak_count}+ gün ardışık sinyal"
+        gun_str = "3+ gün ardışık sinyal"
     elif streak_count == 1:
         gun_str = "1 gün sinyal"
     else:

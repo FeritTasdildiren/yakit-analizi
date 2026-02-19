@@ -45,7 +45,7 @@ router = APIRouter(prefix="/api/v1/ml", tags=["ML Tahmin"])
 
 # --- Yardimci ---
 
-VALID_FUEL_TYPES = {"benzin", "motorin"}
+VALID_FUEL_TYPES = {"benzin", "motorin", "lpg"}
 
 # Backtest icin gereken minimum tahmin sayisi
 _MIN_BACKTEST_PREDICTIONS = 2

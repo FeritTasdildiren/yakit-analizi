@@ -33,7 +33,7 @@ def collect_daily_market_data(self):
     """
     Günlük piyasa verisi topla: Brent, FX, EPDK → DB'ye kaydet.
 
-    Zamanlama: Her gün 18:00 UTC (21:00 TSİ)
+    Zamanlama: Her gün 18:00 TSİ (İstanbul saati)
     Retry: 3 deneme, 5 dakika aralıkla.
     """
     logger.info("Günlük piyasa verisi toplama başlıyor...")
@@ -51,7 +51,7 @@ async def _collect_all_data() -> dict:
     """Tüm veri kaynaklarından günlük veri çek ve DB'ye kaydet."""
     from src.config.database import async_session_factory
     from src.data_collectors.brent_collector import fetch_brent_daily
-    from src.data_collectors.epdk_collector import fetch_turkey_average
+    from src.data_collectors.epdk_collector import fetch_istanbul_avrupa
     from src.data_collectors.fx_collector import fetch_usd_try_daily
     from src.data_collectors.market_data_repository import upsert_market_data
 
@@ -104,19 +104,19 @@ async def _collect_all_data() -> dict:
         results["fx"] = f"HATA: {e}"
         logger.exception("FX veri toplama hatası")
 
-    # 3. EPDK pompa fiyatları (Türkiye ortalaması)
+    # 3. PO pompa fiyatlari (Istanbul Avrupa / Avcilar)
     try:
-        epdk_averages = await fetch_turkey_average(today)
+        epdk_averages = await fetch_istanbul_avrupa(today)
         if epdk_averages:
             results["epdk"] = {
                 fuel_type: str(price)
                 for fuel_type, price in epdk_averages.items()
             }
-            logger.info("EPDK Türkiye ortalaması alındı: %s", epdk_averages)
+            logger.info("PO Istanbul Avrupa fiyatlari alindi: %s", epdk_averages)
         else:
             epdk_averages = {}
             results["epdk"] = None
-            logger.warning("EPDK verisi alınamadı")
+            logger.warning("PO Istanbul fiyatlari alinamadi")
     except Exception as e:
         epdk_averages = {}
         results["epdk"] = f"HATA: {e}"
@@ -137,7 +137,7 @@ async def _collect_all_data() -> dict:
                     if fx_data:
                         sources.append(fx_data.source)
                     if pump_price is not None:
-                        sources.append("petrol_ofisi")
+                        sources.append("po_istanbul_avcilar")
 
                     source_str = "+".join(sources) if sources else "partial"
 
@@ -452,7 +452,7 @@ def send_daily_notifications(self):
     """
     Onaylı Telegram kullanıcılarına günlük bildirim gönder.
 
-    Zamanlama: Her gün 07:00 UTC (10:00 TSİ)
+    Zamanlama: Her gün 10:00 TSİ (İstanbul saati)
     Retry: 2 deneme, 1 dakika aralıkla.
     """
     logger.info("Günlük bildirim gönderme başlıyor...")
@@ -484,6 +484,362 @@ async def _send_notifications() -> dict:
         logger.warning("Bildirim gönderim hatası: %s", exc)
         return {"status": "error", "reason": str(exc)}
 
+
+
+# ── Task 3b: Akşam Bildirim Gönderme ────────────────────────────────────────
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=60)
+def send_evening_notifications(self):
+    """
+    Onaylı Telegram kullanıcılarına akşam bildirim gönder.
+
+    Zamanlama: Her gün 18:00 TSİ (İstanbul saati)
+    Aynı bildirim mantığını kullanır (sabahla aynı _send_notifications).
+    Retry: 2 deneme, 1 dakika aralıkla.
+    """
+    logger.info("Akşam bildirim gönderme başlıyor...")
+
+    try:
+        result = asyncio.run(_send_notifications())
+        logger.info("Akşam bildirim gönderme tamamlandı: %s", result)
+        return result
+    except Exception as exc:
+        logger.exception("Akşam bildirim gönderme hatası: %s", exc)
+        raise self.retry(exc=exc)
+
+
+# ── Task 5: Günlük MBE Hesaplama ────────────────────────────────────────────
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=120)
+def calculate_daily_mbe(self):
+    """
+    Günlük MBE hesaplama: cost_base_snapshots + mbe_calculations.
+
+    Zamanlama: Veri toplamadan 10 dk sonra (18:10 / 05:10 UTC).
+    daily_market_data ve tax_parameters üzerinden hesaplama yapar.
+    """
+    logger.info("Günlük MBE hesaplama başlıyor...")
+    try:
+        results = _calculate_mbe_sync()
+        logger.info("MBE hesaplama tamamlandı: %s", results)
+        return results
+    except Exception as exc:
+        logger.exception("MBE hesaplama hatası: %s", exc)
+        raise self.retry(exc=exc)
+
+
+def _calculate_mbe_sync() -> dict:
+    """Sync MBE hesaplama — psycopg2 ile doğrudan DB erişimi."""
+    import math
+    import psycopg2
+    import psycopg2.extras
+    from decimal import ROUND_HALF_UP
+
+    DB_URL = "postgresql://yakit_analizi:yakit2026secure@localhost:5433/yakit_analizi"
+    RHO = {"benzin": Decimal("1180"), "motorin": Decimal("1190"), "lpg": Decimal("1750")}
+    PRECISION = Decimal("0.00000001")
+    FUEL_TYPES = ["benzin", "motorin", "lpg"]
+
+    def _sd(v):
+        return Decimal(str(v)) if v is not None else Decimal("0")
+
+    today = date.today()
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = False
+    cur = conn.cursor()
+    results = {}
+
+    try:
+        # Tax params yükle
+        cur.execute("SELECT fuel_type, valid_from, otv_fixed_tl, kdv_rate FROM tax_parameters ORDER BY fuel_type, valid_from")
+        tax_params = {}
+        for r in cur.fetchall():
+            tax_params.setdefault(r[0], []).append({"valid_from": r[1], "otv": r[2], "kdv": r[3]})
+
+        def find_tax(ft, td):
+            tps = tax_params.get(ft, [])
+            valid = [t for t in tps if t["valid_from"] <= td]
+            return valid[-1] if valid else None
+
+        for ft in FUEL_TYPES:
+            rho = RHO[ft]
+
+            # Bugünün market data'sını çek
+            cur.execute(
+                "SELECT id, brent_usd_bbl, usd_try_rate, pump_price_tl_lt, cif_med_usd_ton "
+                "FROM daily_market_data WHERE trade_date=%s AND fuel_type=%s",
+                (today, ft)
+            )
+            row = cur.fetchone()
+            if not row:
+                results[ft] = "market_data_yok"
+                logger.warning("%s için %s market data bulunamadı", ft, today)
+                continue
+
+            md_id, brent, fx, pump, cif = row
+            if brent is None or fx is None:
+                results[ft] = "brent_veya_fx_null"
+                continue
+
+            brent_d = _sd(brent)
+            fx_d = _sd(fx)
+            cif_d = _sd(cif) if cif else (brent_d * Decimal("7.33")).quantize(PRECISION, rounding=ROUND_HALF_UP)
+            pump_d = _sd(pump) if pump else Decimal("0")
+
+            # Tax param
+            tp = find_tax(ft, today)
+            if not tp:
+                results[ft] = "tax_param_yok"
+                continue
+            otv = _sd(tp["otv"])
+            kdv = _sd(tp["kdv"])
+
+            # Cost snapshot hesapla
+            nc_fwd = (cif_d * fx_d / rho).quantize(PRECISION, rounding=ROUND_HALF_UP)
+            otv_comp = otv
+            pre_kdv = nc_fwd + otv_comp + Decimal("0.04")  # marj
+            kdv_comp = (pre_kdv * kdv).quantize(PRECISION, rounding=ROUND_HALF_UP)
+            theoretical = (pre_kdv + kdv_comp).quantize(PRECISION, rounding=ROUND_HALF_UP)
+            cost_gap = (pump_d - theoretical).quantize(PRECISION, rounding=ROUND_HALF_UP) if pump_d else Decimal("0")
+            cost_gap_pct = ((cost_gap / theoretical) * Decimal("100")).quantize(PRECISION, rounding=ROUND_HALF_UP) if theoretical else Decimal("0")
+
+            # tax_parameter id bul
+            cur.execute(
+                "SELECT id FROM tax_parameters WHERE fuel_type=%s AND valid_from<=%s ORDER BY valid_from DESC LIMIT 1",
+                (ft, today)
+            )
+            tp_row = cur.fetchone()
+            tp_id = tp_row[0] if tp_row else 1
+
+            # Cost snapshot upsert
+            cur.execute("""
+                INSERT INTO cost_base_snapshots
+                    (trade_date, fuel_type, market_data_id, tax_parameter_id,
+                     cif_component_tl, otv_component_tl, kdv_component_tl,
+                     margin_component_tl, theoretical_cost_tl, actual_pump_price_tl,
+                     implied_cif_usd_ton, cost_gap_tl, cost_gap_pct, source)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (trade_date, fuel_type) DO UPDATE SET
+                    market_data_id=EXCLUDED.market_data_id, tax_parameter_id=EXCLUDED.tax_parameter_id,
+                    cif_component_tl=EXCLUDED.cif_component_tl, otv_component_tl=EXCLUDED.otv_component_tl,
+                    kdv_component_tl=EXCLUDED.kdv_component_tl, margin_component_tl=EXCLUDED.margin_component_tl,
+                    theoretical_cost_tl=EXCLUDED.theoretical_cost_tl, actual_pump_price_tl=EXCLUDED.actual_pump_price_tl,
+                    implied_cif_usd_ton=EXCLUDED.implied_cif_usd_ton, cost_gap_tl=EXCLUDED.cost_gap_tl,
+                    cost_gap_pct=EXCLUDED.cost_gap_pct, source=EXCLUDED.source, updated_at=NOW()
+                RETURNING id
+            """, (today, ft, md_id, tp_id,
+                   float(nc_fwd), float(otv_comp), float(kdv_comp),
+                   0.04, float(theoretical), float(pump_d),
+                   float(cif_d) if cif else None, float(cost_gap), float(cost_gap_pct), "celery"))
+            cs_id = cur.fetchone()[0]
+
+            # MBE hesapla — son 10 günlük nc_forward geçmişi al
+            cur.execute(
+                "SELECT nc_forward FROM mbe_calculations WHERE fuel_type=%s AND trade_date<%s ORDER BY trade_date DESC LIMIT 10",
+                (ft, today)
+            )
+            prev_nc = [Decimal(str(r[0])) for r in cur.fetchall()][::-1]  # eski→yeni
+
+            # nc_base: son fiyat değişimindeki SMA
+            cur.execute(
+                "SELECT nc_base FROM mbe_calculations WHERE fuel_type=%s AND trade_date<%s ORDER BY trade_date DESC LIMIT 1",
+                (ft, today)
+            )
+            prev_base_row = cur.fetchone()
+            nc_base = Decimal(str(prev_base_row[0])) if prev_base_row else nc_fwd
+
+            # SMA-5
+            all_nc = prev_nc + [nc_fwd]
+            window5 = all_nc[-5:] if len(all_nc) >= 5 else all_nc
+            sma5 = sum(window5) / Decimal(str(len(window5)))
+
+            # SMA-10
+            window10 = all_nc[-10:] if len(all_nc) >= 10 else all_nc
+            sma10 = sum(window10) / Decimal(str(len(window10)))
+
+            # MBE
+            mbe_val = (sma5 - nc_base).quantize(PRECISION, rounding=ROUND_HALF_UP)
+            mbe_pct = ((mbe_val / nc_base) * Decimal("100")).quantize(PRECISION, rounding=ROUND_HALF_UP) if nc_base != 0 else Decimal("0")
+
+            # Delta MBE
+            cur.execute(
+                "SELECT mbe_value FROM mbe_calculations WHERE fuel_type=%s AND trade_date<%s ORDER BY trade_date DESC LIMIT 3",
+                (ft, today)
+            )
+            prev_mbe = [Decimal(str(r[0])) for r in cur.fetchall()]
+            delta_mbe = float(mbe_val - prev_mbe[0]) if prev_mbe else None
+            delta_mbe_3 = float(mbe_val - prev_mbe[2]) if len(prev_mbe) >= 3 else None
+
+            # Trend
+            trend = "no_change"
+            if len(all_nc) >= 3:
+                if all_nc[-1] > all_nc[-3]: trend = "increase"
+                elif all_nc[-1] < all_nc[-3]: trend = "decrease"
+
+            # since_last_change
+            cur.execute(
+                "SELECT since_last_change_days FROM mbe_calculations WHERE fuel_type=%s AND trade_date<%s ORDER BY trade_date DESC LIMIT 1",
+                (ft, today)
+            )
+            slc_row = cur.fetchone()
+            dslc = (slc_row[0] + 1) if slc_row else 1
+
+            # MBE upsert
+            cur.execute("""
+                INSERT INTO mbe_calculations
+                    (trade_date, fuel_type, cost_snapshot_id, nc_forward, nc_base,
+                     mbe_value, mbe_pct, sma_5, sma_10, delta_mbe, delta_mbe_3,
+                     trend_direction, regime, since_last_change_days, sma_window, source)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (trade_date, fuel_type) DO UPDATE SET
+                    cost_snapshot_id=EXCLUDED.cost_snapshot_id, nc_forward=EXCLUDED.nc_forward,
+                    nc_base=EXCLUDED.nc_base, mbe_value=EXCLUDED.mbe_value, mbe_pct=EXCLUDED.mbe_pct,
+                    sma_5=EXCLUDED.sma_5, sma_10=EXCLUDED.sma_10, delta_mbe=EXCLUDED.delta_mbe,
+                    delta_mbe_3=EXCLUDED.delta_mbe_3, trend_direction=EXCLUDED.trend_direction,
+                    regime=EXCLUDED.regime, since_last_change_days=EXCLUDED.since_last_change_days,
+                    sma_window=EXCLUDED.sma_window, source=EXCLUDED.source, updated_at=NOW()
+            """, (today, ft, cs_id, float(nc_fwd), float(nc_base),
+                   float(mbe_val), float(mbe_pct), float(sma5), float(sma10),
+                   delta_mbe, delta_mbe_3, trend, 0, dslc, 5, "celery"))
+
+            results[ft] = {"mbe": float(mbe_val), "nc_fwd": float(nc_fwd), "cs_id": cs_id}
+            logger.info("%s MBE=%s nc_fwd=%s", ft, mbe_val, nc_fwd)
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+    return results
+
+
+# ── Task 6: Günlük Risk Hesaplama ───────────────────────────────────────────
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=120)
+def calculate_daily_risk(self):
+    """
+    Günlük risk skoru hesaplama.
+
+    Zamanlama: MBE hesaplamasından 10 dk sonra (18:20 / 05:20 UTC).
+    MBE, FX volatilite, politik gecikme, threshold breach, trend momentum.
+    """
+    logger.info("Günlük risk hesaplama başlıyor...")
+    try:
+        results = _calculate_risk_sync()
+        logger.info("Risk hesaplama tamamlandı: %s", results)
+        return results
+    except Exception as exc:
+        logger.exception("Risk hesaplama hatası: %s", exc)
+        raise self.retry(exc=exc)
+
+
+def _calculate_risk_sync() -> dict:
+    """Sync risk hesaplama — psycopg2 ile doğrudan DB erişimi."""
+    import math
+    import psycopg2
+
+    DB_URL = "postgresql://yakit_analizi:yakit2026secure@localhost:5433/yakit_analizi"
+    FUEL_TYPES = ["benzin", "motorin", "lpg"]
+    WJ = '{"mbe": "0.30", "fx_volatility": "0.15", "political_delay": "0.20", "threshold_breach": "0.20", "trend_momentum": "0.15"}'
+
+    today = date.today()
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = False
+    cur = conn.cursor()
+    results = {}
+
+    try:
+        for ft in FUEL_TYPES:
+            # Bugünün MBE'sini al
+            cur.execute(
+                "SELECT mbe_value, since_last_change_days FROM mbe_calculations WHERE fuel_type=%s AND trade_date=%s",
+                (ft, today)
+            )
+            mbe_row = cur.fetchone()
+            if not mbe_row:
+                results[ft] = "mbe_yok"
+                continue
+
+            mbe_val = float(mbe_row[0])
+            dslc = mbe_row[1] or 1
+
+            # MBE bileşeni: |MBE| / 5, normalize [0,1]
+            mbe_abs = abs(mbe_val)
+            mbe_norm = min(1.0, mbe_abs / 5.0)
+
+            # FX volatilite: son 5 günün USD/TRY standart sapması
+            cur.execute(
+                "SELECT usd_try_rate FROM daily_market_data WHERE fuel_type=%s AND trade_date<=%s AND usd_try_rate IS NOT NULL ORDER BY trade_date DESC LIMIT 5",
+                (ft, today)
+            )
+            fx_rows = [float(r[0]) for r in cur.fetchall()]
+            fx_vol = 0.0
+            if len(fx_rows) >= 2:
+                mean_fx = sum(fx_rows) / len(fx_rows)
+                fx_vol = math.sqrt(sum((x - mean_fx) ** 2 for x in fx_rows) / (len(fx_rows) - 1))
+            fx_norm = min(1.0, fx_vol / 2.0)
+
+            # Politik gecikme: dslc / 60
+            pol_norm = min(1.0, dslc / 60.0)
+
+            # Threshold breach: MBE > 0.1 ise aktif
+            thresh_norm = min(1.0, mbe_abs / 1.0) if mbe_abs > 0.1 else 0.0
+
+            # Trend momentum: son 3 MBE değişim oranı
+            cur.execute(
+                "SELECT mbe_value FROM mbe_calculations WHERE fuel_type=%s AND trade_date<=%s ORDER BY trade_date DESC LIMIT 3",
+                (ft, today)
+            )
+            mbe_hist = [float(r[0]) for r in cur.fetchall()]
+            mom = 0.5
+            if len(mbe_hist) >= 3:
+                m1, m3 = mbe_hist[0], mbe_hist[2]
+                mr = (m1 - m3) / max(abs(m3), 0.01)
+                mom = min(1.0, max(0.0, (mr + 1) / 2))
+
+            # Composite skor
+            composite = min(1.0, max(0.0,
+                0.30 * mbe_norm + 0.15 * fx_norm + 0.20 * pol_norm +
+                0.20 * thresh_norm + 0.15 * mom
+            ))
+            sm = "crisis" if composite >= 0.80 else ("high_alert" if composite >= 0.60 else "normal")
+
+            # Risk upsert
+            cur.execute("""
+                INSERT INTO risk_scores
+                    (trade_date, fuel_type, composite_score, mbe_component,
+                     fx_volatility_component, political_delay_component,
+                     threshold_breach_component, trend_momentum_component,
+                     weight_vector, system_mode)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+                ON CONFLICT (trade_date, fuel_type) DO UPDATE SET
+                    composite_score=EXCLUDED.composite_score, mbe_component=EXCLUDED.mbe_component,
+                    fx_volatility_component=EXCLUDED.fx_volatility_component,
+                    political_delay_component=EXCLUDED.political_delay_component,
+                    threshold_breach_component=EXCLUDED.threshold_breach_component,
+                    trend_momentum_component=EXCLUDED.trend_momentum_component,
+                    weight_vector=EXCLUDED.weight_vector, system_mode=EXCLUDED.system_mode, updated_at=NOW()
+            """, (today, ft, round(composite, 4), round(mbe_norm, 4), round(fx_norm, 4),
+                   round(pol_norm, 4), round(thresh_norm, 4), round(mom, 4), WJ, sm))
+
+            results[ft] = {"composite": round(composite, 4), "mode": sm}
+            logger.info("%s risk=%s mode=%s", ft, round(composite, 4), sm)
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+    return results
 
 # ── Task 4: Sistem Sağlık Kontrolü ──────────────────────────────────────────
 
@@ -543,3 +899,44 @@ async def _check_health() -> dict:
         logger.warning("ML model sağlık kontrolü başarısız: %s", e)
 
     return status
+
+
+# ── Task 7: Günlük ML Tahmin v5 ─────────────────────────────────────────────
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=120)
+def run_daily_prediction_v5(self):
+    """
+    v5 predictor ile günlük tahmin çalıştır.
+
+    v5 pipeline: feature -> stage-1 -> kalibrasyon -> stage-2 -> alarm -> DB.
+    v1 korunur, v5 yan yana çalışır.
+
+    Zamanlama: Akşam 18:35 UTC (21:35 TSİ) — v1'den 5 dk sonra
+               Sabah 05:35 UTC (08:35 TSİ) — sabah v1'den 5 dk sonra
+    """
+    logger.info("v5 günlük ML tahmin başlıyor...")
+
+    try:
+        from src.predictor_v5.predictor import predict_all
+
+        results = predict_all()
+        logger.info("v5 tahmin tamamlandı: %s", results)
+
+        # Sonuç özetini çıkar
+        summary = {}
+        for fuel_type, result in results.items():
+            if result is None:
+                summary[fuel_type] = "HATA"
+            else:
+                summary[fuel_type] = {
+                    "prob": result.get("stage1_probability"),
+                    "alarm": result.get("alarm", {}).get("should_alarm"),
+                    "alarm_type": result.get("alarm", {}).get("alarm_type"),
+                }
+        logger.info("v5 tahmin özeti: %s", summary)
+        return {"status": "ok", "results": summary}
+
+    except Exception as exc:
+        logger.exception("v5 tahmin hatası: %s", exc)
+        raise self.retry(exc=exc)

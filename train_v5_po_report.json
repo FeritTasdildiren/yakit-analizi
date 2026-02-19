@@ -1,0 +1,155 @@
+{
+  "benzin": {
+    "status": "success",
+    "paths": {
+      "stage1": "/var/www/yakit_analiz/models/v5/benzin_stage1.joblib",
+      "stage2_first": "/var/www/yakit_analiz/models/v5/benzin_stage2_first.joblib",
+      "stage2_net": "/var/www/yakit_analiz/models/v5/benzin_stage2_net.joblib",
+      "calibrator": "/var/www/yakit_analiz/models/v5/benzin_calibrator.joblib"
+    },
+    "stage1_metrics": {
+      "stage": "stage1",
+      "n_samples": 940,
+      "n_positive": 252,
+      "n_negative": 688,
+      "scale_pos_weight": 2.73,
+      "train_auc": 0.9985,
+      "train_f1": 0.9296,
+      "train_precision": 0.8715,
+      "train_recall": 0.996,
+      "train_accuracy": 0.9596
+    },
+    "stage2_metrics": {
+      "stage": "stage2",
+      "skipped": false,
+      "n_positive": 252,
+      "first_event": {
+        "train_rmse": 0.307923,
+        "train_mae": 0.165795,
+        "mean_actual": 0.2361,
+        "std_actual": 1.2175
+      },
+      "net_amount": {
+        "train_rmse": 0.357685,
+        "train_mae": 0.202258,
+        "mean_actual": 0.3184,
+        "std_actual": 1.4284
+      }
+    },
+    "calibration_metrics": {
+      "selected_method": "platt",
+      "ece": 0.024834,
+      "mce": 0.641843,
+      "brier_score": 0.013861,
+      "all_candidates": [
+        {
+          "method": "platt",
+          "ece": 0.024834
+        }
+      ]
+    },
+    "elapsed_seconds": 41.3
+  },
+  "motorin": {
+    "status": "success",
+    "paths": {
+      "stage1": "/var/www/yakit_analiz/models/v5/motorin_stage1.joblib",
+      "stage2_first": "/var/www/yakit_analiz/models/v5/motorin_stage2_first.joblib",
+      "stage2_net": "/var/www/yakit_analiz/models/v5/motorin_stage2_net.joblib",
+      "calibrator": "/var/www/yakit_analiz/models/v5/motorin_calibrator.joblib"
+    },
+    "stage1_metrics": {
+      "stage": "stage1",
+      "n_samples": 940,
+      "n_positive": 280,
+      "n_negative": 660,
+      "scale_pos_weight": 2.36,
+      "train_auc": 0.9971,
+      "train_f1": 0.9313,
+      "train_precision": 0.877,
+      "train_recall": 0.9929,
+      "train_accuracy": 0.9564
+    },
+    "stage2_metrics": {
+      "stage": "stage2",
+      "skipped": false,
+      "n_positive": 280,
+      "first_event": {
+        "train_rmse": 0.247548,
+        "train_mae": 0.173716,
+        "mean_actual": 0.2667,
+        "std_actual": 1.4047
+      },
+      "net_amount": {
+        "train_rmse": 0.281247,
+        "train_mae": 0.197902,
+        "mean_actual": 0.3113,
+        "std_actual": 1.5767
+      }
+    },
+    "calibration_metrics": {
+      "selected_method": "platt",
+      "ece": 0.036781,
+      "mce": 0.706391,
+      "brier_score": 0.030959,
+      "all_candidates": [
+        {
+          "method": "platt",
+          "ece": 0.036781
+        }
+      ]
+    },
+    "elapsed_seconds": 42.1
+  },
+  "lpg": {
+    "status": "success",
+    "paths": {
+      "stage1": "/var/www/yakit_analiz/models/v5/lpg_stage1.joblib",
+      "stage2_first": "/var/www/yakit_analiz/models/v5/lpg_stage2_first.joblib",
+      "stage2_net": "/var/www/yakit_analiz/models/v5/lpg_stage2_net.joblib",
+      "calibrator": "/var/www/yakit_analiz/models/v5/lpg_calibrator.joblib"
+    },
+    "stage1_metrics": {
+      "stage": "stage1",
+      "n_samples": 693,
+      "n_positive": 90,
+      "n_negative": 603,
+      "scale_pos_weight": 6.7,
+      "train_auc": 1.0,
+      "train_f1": 0.9677,
+      "train_precision": 0.9375,
+      "train_recall": 1.0,
+      "train_accuracy": 0.9913
+    },
+    "stage2_metrics": {
+      "stage": "stage2",
+      "skipped": false,
+      "n_positive": 90,
+      "first_event": {
+        "train_rmse": 0.206011,
+        "train_mae": 0.143679,
+        "mean_actual": 0.3007,
+        "std_actual": 0.9758
+      },
+      "net_amount": {
+        "train_rmse": 0.198602,
+        "train_mae": 0.141242,
+        "mean_actual": 0.3181,
+        "std_actual": 0.9864
+      }
+    },
+    "calibration_metrics": {
+      "selected_method": "platt",
+      "ece": 0.0,
+      "mce": 4e-06,
+      "brier_score": 0.0,
+      "all_candidates": [
+        {
+          "method": "platt",
+          "ece": 0.0
+        }
+      ]
+    },
+    "elapsed_seconds": 44.5
+  }
+}

@@ -82,7 +82,7 @@ class TestCeleryConfig:
         from src.celery_app.celery_config import celery_app
 
         assert celery_app.conf.beat_schedule is not None
-        assert len(celery_app.conf.beat_schedule) == 4
+        assert len(celery_app.conf.beat_schedule) == 12
 
 
 # ============================================================
@@ -97,7 +97,7 @@ class TestBeatSchedule:
         """Schedule'da 4 görev tanımlı olmalı."""
         from src.celery_app.beat_schedule import CELERY_BEAT_SCHEDULE
 
-        assert len(CELERY_BEAT_SCHEDULE) == 4
+        assert len(CELERY_BEAT_SCHEDULE) == 12
         assert "collect-daily-market-data" in CELERY_BEAT_SCHEDULE
         assert "run-daily-prediction" in CELERY_BEAT_SCHEDULE
         assert "send-daily-notifications" in CELERY_BEAT_SCHEDULE

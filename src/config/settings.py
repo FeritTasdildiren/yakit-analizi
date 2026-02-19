@@ -32,19 +32,25 @@ class Settings(BaseSettings):
     BRENT_FALLBACK_SOURCE: str = "yahoo_web"
 
     # --- Zamanlama ---
-    # Günlük veri çekme saati (UTC). 18 UTC = 21:00 TSİ
+    # Günlük veri çekme saati (TSİ - İstanbul saati). Celery timezone=Europe/Istanbul
     DATA_FETCH_HOUR: int = 18
 
     # --- Celery Scheduler ---
-    # Tahmin çalıştırma saati (UTC). 18:30 UTC = 21:30 TSİ
+    # Tahmin çalıştırma saati (TSİ - İstanbul saati). 18:30 TSİ
     PREDICTION_HOUR: int = 18
     PREDICTION_MINUTE: int = 30
-    # Bildirim gönderme saati (UTC). 07:00 UTC = 10:00 TSİ
-    NOTIFICATION_HOUR: int = 7
+    # Sabah bildirim gönderme saati (TSİ - İstanbul saati). 10:00 TSİ
+    NOTIFICATION_HOUR: int = 10
+    # Sabah veri çekme saati (TSİ - İstanbul saati). 08:00 TSİ
+    MORNING_DATA_FETCH_HOUR: int = 8
+    # Sabah tahmin saati (TSİ - İstanbul saati). 08:30 TSİ
+    MORNING_PREDICTION_HOUR: int = 8
+    MORNING_PREDICTION_MINUTE: int = 30
 
     # --- Telegram Bot ---
     TELEGRAM_BOT_TOKEN: str = ""
-    TELEGRAM_DAILY_NOTIFICATION_HOUR: int = 7  # UTC (10:00 TSİ)
+    TELEGRAM_DAILY_NOTIFICATION_HOUR: int = 10  # TSİ - İstanbul saati (10:00 TSİ)
+    TELEGRAM_EVENING_NOTIFICATION_HOUR: int = 18  # TSİ - İstanbul saati (18:00 TSİ)
 
     # --- Yeniden Deneme ---
     RETRY_COUNT: int = 3

@@ -1156,6 +1156,105 @@ async def fetch_pump_prices(
         return []
 
 
+
+
+async def fetch_istanbul_avrupa(
+    tarih: date | None = None,
+) -> dict[str, Decimal]:
+    """
+    Petrol Ofisi uzerinden Istanbul (Avrupa) pompa fiyatlarini ceker.
+
+    Avcilar ilcesi Avrupa yakasinda oldugu icin ISTANBUL (AVRUPA)
+    satirindaki fiyatlar kullanilir. Boylece tarihsel po_istanbul_avcilar
+    verileriyle tutarlilik saglanir.
+
+    Args:
+        tarih: Istenen tarih. None veya bugun degilse bos doner.
+
+    Returns:
+        Yakit tipi -> fiyat sozlugu.
+        Ornek: {'benzin': Decimal('57.09'), 'motorin': Decimal('57.84'), 'lpg': Decimal('30.29')}
+    """
+    if tarih is not None and tarih != date.today():
+        logger.info(
+            "PO gecmis tarih desteklemiyor: tarih=%s, bugun=%s", tarih, date.today()
+        )
+        return {}
+
+    try:
+        city_prices = await _fetch_petrol_ofisi_all_cities()
+    except Exception:
+        logger.warning("Petrol Ofisi erisilemedi.", exc_info=True)
+        return {}
+
+    # _fetch_petrol_ofisi_all_cities Istanbul icin Avrupa+Anadolu
+    # ortalamasi aliyor. Biz sadece Avrupa istiyoruz.
+    # Dogrudan HTML'den ISTANBUL (AVRUPA) satirini cek
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(30),
+            follow_redirects=True,
+            headers=BROWSER_HEADERS,
+        ) as client:
+            response = await client.get(PETROL_OFISI_URL)
+            response.raise_for_status()
+
+        html_content = response.text
+
+        row_pattern = re.compile(
+            r'<tr[^>]*data-disctrict-name="ISTANBUL \(AVRUPA\)"[^>]*>(.*?)</tr>',
+            re.DOTALL | re.IGNORECASE,
+        )
+        match = row_pattern.search(html_content)
+        if not match:
+            logger.warning("PO HTML'de ISTANBUL (AVRUPA) satiri bulunamadi.")
+            # Fallback: ortalama fiyatlari kullan
+            if "34" in city_prices:
+                logger.info("Fallback: Istanbul ortalamasi kullaniliyor.")
+                return {k: v for k, v in city_prices["34"].items() if v is not None}
+            return {}
+
+        row_html = match.group(1)
+        tax_pattern = re.compile(
+            r'<span\s+class="with-tax">([^<]+)</span>', re.IGNORECASE
+        )
+        prices = tax_pattern.findall(row_html)
+
+        # Tablo: [0]=Benzin95, [1]=Diesel, [2]=Gazyagi, [3]=Kalorifer, [4]=FuelOil, [5]=LPG
+        result: dict[str, Decimal] = {}
+        if len(prices) >= 6:
+            benzin = _parse_decimal(prices[0])
+            motorin = _parse_decimal(prices[1])
+            lpg = _parse_decimal(prices[5])
+
+            if benzin is not None:
+                result["benzin"] = benzin
+            if motorin is not None:
+                result["motorin"] = motorin
+            if lpg is not None:
+                result["lpg"] = lpg
+
+            logger.info(
+                "PO Istanbul Avrupa fiyatlari: benzin=%s, motorin=%s, lpg=%s",
+                result.get("benzin"),
+                result.get("motorin"),
+                result.get("lpg"),
+            )
+        else:
+            logger.warning(
+                "PO Istanbul Avrupa satirinda yetersiz fiyat: %d", len(prices)
+            )
+
+        return result
+
+    except Exception:
+        logger.warning("Istanbul Avrupa fiyat cekme hatasi.", exc_info=True)
+        # Fallback: ortalama
+        if "34" in city_prices:
+            return {k: v for k, v in city_prices["34"].items() if v is not None}
+        return {}
+
+
 async def fetch_turkey_average(
     tarih: date | None = None,
 ) -> dict[str, Decimal]:

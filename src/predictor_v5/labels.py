@@ -1,22 +1,19 @@
 """
-Predictor v5 — Label Üretim Modülü.
+Predictor v5 — Label Uretim Modulu
+===================================
+pump_price gunluk farklarindan binary label, first_event ve net_amount_3d hesaplama.
 
-pump_price günlük farklarından binary label, first_event ve net_amount_3d hesaplar.
-Her takvim günü D için (D HARİÇ) D+1, D+2, D+3 penceresi incelenir.
-Sistem 7/7 çalışır — hafta sonu ve tatil dahil forward-fill uygulanır.
-
-Kullanım:
+Kullanim:
     from src.predictor_v5.labels import compute_labels
-    df = compute_labels("benzin", date(2024, 1, 1), date(2026, 2, 1))
+    df = compute_labels("benzin", date(2024, 1, 1), date(2024, 12, 31))
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
-from typing import Any
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Optional
 
 import pandas as pd
 import psycopg2
@@ -24,117 +21,94 @@ import psycopg2.extras
 
 logger = logging.getLogger(__name__)
 
-# --- Sabitler (TASK-045 config.py paralel, hard-code default) ---
-LABEL_WINDOW_DAYS: int = 3
-THRESHOLD_TL: Decimal = Decimal("0.25")
-FORWARD_FILL_MAX_DAYS: int = 15
-VALID_FUEL_TYPES: set[str] = {"benzin", "motorin", "lpg"}
+# ---------------------------------------------------------------------------
+# Config'den yuklenen sabitler
+# ---------------------------------------------------------------------------
+try:
+    from src.predictor_v5.config import (
+        THRESHOLD_TL as THRESHOLD,
+        LABEL_WINDOW as LABEL_WINDOW_DAYS,
+        FF_MAX_LOOKBACK as MAX_FF_LOOKBACK,
+        FUEL_TYPES,
+    )
+    VALID_FUEL_TYPES = tuple(FUEL_TYPES)
+except ImportError:
+    # Fallback: config.py henuz yoksa hard-code
+    THRESHOLD = Decimal("0.25")
+    LABEL_WINDOW_DAYS = 3
+    MAX_FF_LOOKBACK = 15
+    VALID_FUEL_TYPES = ("benzin", "motorin", "lpg")
 
-# DB bağlantı URL'i — ortam değişkeninden veya default
-DATABASE_URL: str = os.environ.get(
-    "DATABASE_URL_SYNC",
-    "postgresql://yakit_analizi:yakit2026secure@localhost:5433/yakit_analizi",
-)
+DB_DSN = "postgresql://yakit_analizi:yakit2026secure@localhost:5433/yakit_analizi" 
 
 
-# ─────────────────── yardımcı fonksiyonlar ───────────────────
+# ---------------------------------------------------------------------------
+# Yardimci fonksiyonlar
+# ---------------------------------------------------------------------------
 
-
-def _safe_decimal(value: Any) -> Decimal | None:
-    """float → str → Decimal güvenli dönüşüm. None/NaN → None döner."""
+def _safe_decimal(value) -> Optional[Decimal]:
+    """float/int/str -> Decimal donusumu. None -> None."""
     if value is None:
         return None
-    try:
-        d = Decimal(str(value))
-        if d.is_nan() or d.is_infinite():
-            return None
-        return d
-    except (InvalidOperation, ValueError, TypeError):
-        return None
-
-
-def _get_connection(dsn: str | None = None) -> psycopg2.extensions.connection:
-    """Sync psycopg2 bağlantısı döner (Celery uyumlu)."""
-    return psycopg2.connect(dsn or DATABASE_URL)
+    # float -> str -> Decimal (IEEE 754 artefaktlarini onler)
+    return Decimal(str(value))
 
 
 def _fetch_pump_prices(
     fuel_type: str,
     start_date: date,
     end_date: date,
-    conn: psycopg2.extensions.connection | None = None,
+    dsn: str = DB_DSN,
 ) -> dict[date, Decimal]:
     """
-    DB'den pump_price_tl_lt verilerini çeker.
-
-    Returns:
-        {trade_date: Decimal(pump_price)} sözlüğü (yalnızca NULL olmayanlar)
+    DB'den pump_price_tl_lt degerlerini ceker.
+    Dondurur: {trade_date: Decimal(pump_price)} sozlugu.
     """
-    own_conn = conn is None
-    if own_conn:
-        conn = _get_connection()
-
+    query = """
+        SELECT trade_date, pump_price_tl_lt
+        FROM daily_market_data
+        WHERE fuel_type = %s
+          AND trade_date BETWEEN %s AND %s
+        ORDER BY trade_date
+    """
+    conn = psycopg2.connect(dsn)
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute(
-                """
-                SELECT trade_date, pump_price_tl_lt
-                FROM daily_market_data
-                WHERE fuel_type = %s
-                  AND trade_date BETWEEN %s AND %s
-                  AND pump_price_tl_lt IS NOT NULL
-                ORDER BY trade_date
-                """,
-                (fuel_type, start_date, end_date),
-            )
+        with conn.cursor() as cur:
+            cur.execute(query, (fuel_type, start_date, end_date))
             rows = cur.fetchall()
     finally:
-        if own_conn:
-            conn.close()
+        conn.close()
 
-    result: dict[date, Decimal] = {}
-    for row in rows:
-        price = _safe_decimal(row["pump_price_tl_lt"])
-        if price is not None:
-            result[row["trade_date"]] = price
-
-    return result
+    prices: dict[date, Decimal] = {}
+    for trade_date, pump_price in rows:
+        if pump_price is not None:
+            prices[trade_date] = _safe_decimal(pump_price)
+    return prices
 
 
 def _forward_fill_prices(
-    raw_prices: dict[date, Decimal],
+    prices: dict[date, Decimal],
     start_date: date,
     end_date: date,
-) -> dict[date, Decimal | None]:
+    max_lookback: int = MAX_FF_LOOKBACK,
+) -> dict[date, Optional[Decimal]]:
     """
-    Her takvim günü için pump_price oluşturur (forward-fill).
-
-    Kurallar:
-    - Mevcut fiyat varsa doğrudan kullanılır
-    - Yoksa son bilinen fiyat forward-fill edilir (max 15 gün)
-    - 15 günden fazla boşlukta None döner
+    Her takvim gunu icin pump_price dondurur.
+    Eksik gunlerde son bilinen degeri forward-fill eder (max_lookback sinirli).
     """
-    filled: dict[date, Decimal | None] = {}
-    last_known: Decimal | None = None
-    last_known_date: date | None = None
-
-    # start_date öncesinde bir fiyat olabilir — raw_prices'tan en yakın geçmiş tarihi bul
-    if raw_prices:
-        before_start = [d for d in raw_prices if d < start_date]
-        if before_start:
-            closest = max(before_start)
-            last_known = raw_prices[closest]
-            last_known_date = closest
+    filled: dict[date, Optional[Decimal]] = {}
+    last_known: Optional[Decimal] = None
+    last_known_date: Optional[date] = None
 
     current = start_date
     while current <= end_date:
-        if current in raw_prices:
-            filled[current] = raw_prices[current]
-            last_known = raw_prices[current]
+        if current in prices:
+            last_known = prices[current]
             last_known_date = current
+            filled[current] = last_known
         elif last_known is not None and last_known_date is not None:
-            gap_days = (current - last_known_date).days
-            if gap_days <= FORWARD_FILL_MAX_DAYS:
+            gap = (current - last_known_date).days
+            if gap <= max_lookback:
                 filled[current] = last_known
             else:
                 filled[current] = None
@@ -147,103 +121,80 @@ def _forward_fill_prices(
 
 def _compute_single_label(
     run_date: date,
-    prices: dict[date, Decimal | None],
-    fuel_type: str,
-) -> dict[str, Any] | None:
+    filled_prices: dict[date, Optional[Decimal]],
+    threshold: Decimal = THRESHOLD,
+    window: int = LABEL_WINDOW_DAYS,
+) -> Optional[dict]:
     """
-    Tek bir run_date için label hesaplar.
-
-    Args:
-        run_date: D günü
-        prices: forward-fill uygulanmış fiyat sözlüğü
-        fuel_type: yakıt tipi
-
-    Returns:
-        Label dict veya None (yeterli veri yoksa)
+    Tek bir run_date (D) icin label hesaplar.
+    D+1 .. D+window takvim gunlerini inceler.
+    Dondurur: label dict veya None (veri yetersiz).
     """
-    # ref = pump_price_asof(D, 18:30) — D günündeki son bilinen fiyat
-    ref = prices.get(run_date)
+    ref = filled_prices.get(run_date)
     if ref is None:
         return None
 
-    # D+1, D+2, D+3 fiyatları kontrol et
-    window_prices: list[Decimal | None] = []
-    for i in range(1, LABEL_WINDOW_DAYS + 1):
-        d_plus_i = run_date + timedelta(days=i)
-        window_prices.append(prices.get(d_plus_i))
+    # D+1 .. D+window fiyatlarini topla
+    window_prices: list[tuple[date, Optional[Decimal]]] = []
+    for i in range(1, window + 1):
+        d = run_date + timedelta(days=i)
+        price = filled_prices.get(d)
+        window_prices.append((d, price))
 
-    # Pencere sonunun tarihi
-    label_window_end = run_date + timedelta(days=LABEL_WINDOW_DAYS)
+    # Tum pencere gunlerinde fiyat olmali (FF sonrasi)
+    for d, p in window_prices:
+        if p is None:
+            return None
 
-    # Yeterli veri kontrolü — en az D+1 fiyatı olmalı
-    if window_prices[0] is None:
-        return None
-
-    # ── daily_diff hesaplama ──
-    # daily_diff[i] = price(D+i) - price(D+i-1), i = 1,2,3
-    # price(D+0) = ref
+    # --- daily_diff hesaplama ---
+    # daily_diff[i] = pump_price(D+i) - pump_price(D+i-1)
+    # i=1: pump_price(D+1) - pump_price(D)
     prev_price = ref
-    daily_diffs: list[Decimal | None] = []
-    for i in range(LABEL_WINDOW_DAYS):
-        current_price = window_prices[i]
-        if current_price is not None and prev_price is not None:
-            daily_diffs.append(current_price - prev_price)
-            prev_price = current_price
-        else:
-            daily_diffs.append(None)
-            if current_price is not None:
-                prev_price = current_price
+    daily_diffs: list[tuple[int, Decimal]] = []  # (i, diff)
+    for i, (d, price) in enumerate(window_prices, start=1):
+        diff = price - prev_price
+        daily_diffs.append((i, diff))
+        prev_price = price
 
-    # ── y_binary: herhangi bir |daily_diff| >= 0.25 ise 1 ──
+    # --- y_binary ---
     y_binary = 0
-    for dd in daily_diffs:
-        if dd is not None and abs(dd) >= THRESHOLD_TL:
+    for _, diff in daily_diffs:
+        if abs(diff) >= threshold:
             y_binary = 1
             break
 
-    # ── first_event: önce günlük, sonra kümülatif fallback ──
+    # --- first_event ---
     first_event_direction = 0
     first_event_amount = Decimal("0")
     first_event_type = "none"
 
-    # 1) Günlük kontrol
-    for dd in daily_diffs:
-        if dd is not None and abs(dd) >= THRESHOLD_TL:
-            first_event_amount = dd
-            first_event_direction = 1 if dd > 0 else -1
+    # Adim 1: Gunluk degisimlerde esigi asan ilk gun
+    for i, diff in daily_diffs:
+        if abs(diff) >= threshold:
+            first_event_direction = 1 if diff > 0 else -1
+            first_event_amount = diff
             first_event_type = "daily"
             break
 
-    # 2) Kümülatif fallback (günlükte bulunamadıysa)
-    if first_event_type == "none" and y_binary == 0:
-        for i in range(LABEL_WINDOW_DAYS):
-            current_price = window_prices[i]
-            if current_price is not None:
-                cumul = current_price - ref
-                if abs(cumul) >= THRESHOLD_TL:
-                    first_event_amount = cumul
-                    first_event_direction = 1 if cumul > 0 else -1
-                    first_event_type = "cumulative"
-                    y_binary = 1  # kümülatif de label'ı tetikler
-                    break
-
-    # ── net_amount_3d = pump_price(D+3) - ref ──
-    d3_price = window_prices[LABEL_WINDOW_DAYS - 1]  # D+3
-    if d3_price is not None:
-        net_amount_3d = d3_price - ref
-    else:
-        # D+3 yoksa mevcut son bilinen fiyatı kullan
-        net_amount_3d = None
-        for i in range(LABEL_WINDOW_DAYS - 1, -1, -1):
-            if window_prices[i] is not None:
-                net_amount_3d = window_prices[i] - ref
+    # Adim 2: Gunlukte bulunamadiysa kumulatif kontrol (fallback)
+    if first_event_type == "none":
+        for i, (d, price) in enumerate(window_prices, start=1):
+            cumul_diff = price - ref
+            if abs(cumul_diff) >= threshold:
+                first_event_direction = 1 if cumul_diff > 0 else -1
+                first_event_amount = cumul_diff
+                first_event_type = "cumulative"
+                y_binary = 1  # kumulatif de bir olay
                 break
-        if net_amount_3d is None:
-            net_amount_3d = Decimal("0")
+
+    # --- net_amount_3d ---
+    net_amount_3d = window_prices[-1][1] - ref
+
+    # --- label_window_end ---
+    label_window_end = run_date + timedelta(days=window)
 
     return {
         "run_date": run_date,
-        "fuel_type": fuel_type,
         "y_binary": y_binary,
         "first_event_direction": first_event_direction,
         "first_event_amount": first_event_amount,
@@ -254,122 +205,120 @@ def _compute_single_label(
     }
 
 
-# ─────────────────── ana fonksiyon ───────────────────
-
+# ---------------------------------------------------------------------------
+# Ana fonksiyon
+# ---------------------------------------------------------------------------
 
 def compute_labels(
     fuel_type: str,
     start_date: date,
     end_date: date,
-    conn: psycopg2.extensions.connection | None = None,
+    dsn: str = DB_DSN,
+    threshold: Decimal = THRESHOLD,
+    window: int = LABEL_WINDOW_DAYS,
+    max_ff_lookback: int = MAX_FF_LOOKBACK,
 ) -> pd.DataFrame:
     """
-    Belirtilen yakıt tipi ve tarih aralığı için label DataFrame üretir.
+    Belirtilen yakit tipi ve tarih araligi icin label DataFrame'i uretir.
+
+    Her takvim gunu D icin D+1..D+window penceresi incelenir.
+    Binary label, first_event ve net_amount_3d hesaplanir.
 
     Args:
-        fuel_type: "benzin", "motorin" veya "lpg"
-        start_date: Label üretimi başlangıç tarihi (D)
-        end_date: Label üretimi bitiş tarihi (D)
-        conn: Opsiyonel psycopg2 bağlantısı (test enjeksiyonu için)
+        fuel_type: "benzin", "motorin", "lpg"
+        start_date: Label uretiminin baslayacagi tarih (D)
+        end_date: Label uretiminin bitecegi tarih (D)
+        dsn: PostgreSQL baglanti string'i
+        threshold: Esik degeri (Decimal, default 0.25 TL/L)
+        window: Label penceresi (takvim gunu, default 3)
+        max_ff_lookback: Forward-fill max lookback (takvim gunu)
 
     Returns:
-        pd.DataFrame — kolonlar: run_date, fuel_type, y_binary,
-        first_event_direction, first_event_amount, first_event_type,
-        net_amount_3d, ref_price, label_window_end
-
-    Raises:
-        ValueError: Geçersiz fuel_type
+        DataFrame: run_date, fuel_type, y_binary, first_event_direction,
+                   first_event_amount, first_event_type, net_amount_3d,
+                   ref_price, label_window_end
     """
     if fuel_type not in VALID_FUEL_TYPES:
-        raise ValueError(
-            f"Geçersiz fuel_type: {fuel_type!r}. "
-            f"Geçerli değerler: {VALID_FUEL_TYPES}"
-        )
+        raise ValueError(f"Gecersiz yakit tipi: {fuel_type}. Gecerli: {VALID_FUEL_TYPES}")
 
     if start_date > end_date:
-        raise ValueError(
-            f"start_date ({start_date}) > end_date ({end_date})"
-        )
+        raise ValueError(f"start_date ({start_date}) > end_date ({end_date})")
+
+    # DB'den veriyi cek: start_date - max_ff_lookback .. end_date + window
+    # FF icin onceki gunlere, pencere icin sonraki gunlere ihtiyacimiz var
+    fetch_start = start_date - timedelta(days=max_ff_lookback)
+    fetch_end = end_date + timedelta(days=window)
 
     logger.info(
-        "Label üretimi başlıyor: %s [%s → %s]",
-        fuel_type, start_date, end_date,
+        "Label uretimi: fuel=%s, range=%s..%s, fetch=%s..%s",
+        fuel_type, start_date, end_date, fetch_start, fetch_end,
     )
 
-    # DB'den veri çek — label penceresi için end_date + LABEL_WINDOW_DAYS gün fazlası
-    # Ayrıca forward-fill için start_date - FORWARD_FILL_MAX_DAYS gün öncesi
-    fetch_start = start_date - timedelta(days=FORWARD_FILL_MAX_DAYS)
-    fetch_end = end_date + timedelta(days=LABEL_WINDOW_DAYS)
-
-    raw_prices = _fetch_pump_prices(fuel_type, fetch_start, fetch_end, conn=conn)
+    raw_prices = _fetch_pump_prices(fuel_type, fetch_start, fetch_end, dsn=dsn)
+    logger.info("DB'den %d kayit cekildi", len(raw_prices))
 
     if not raw_prices:
-        logger.warning("Hiç pump_price verisi bulunamadı: %s [%s → %s]", fuel_type, fetch_start, fetch_end)
-        return _empty_dataframe()
+        logger.warning("Hic pump_price verisi bulunamadi: %s %s..%s", fuel_type, fetch_start, fetch_end)
+        return _empty_dataframe(fuel_type)
 
-    # Forward-fill uygula
-    prices = _forward_fill_prices(raw_prices, fetch_start, fetch_end)
+    filled_prices = _forward_fill_prices(raw_prices, fetch_start, fetch_end, max_lookback=max_ff_lookback)
 
-    # Her takvim günü için label hesapla
-    labels: list[dict[str, Any]] = []
+    # Her gun icin label hesapla
+    labels: list[dict] = []
     current = start_date
     while current <= end_date:
-        label = _compute_single_label(current, prices, fuel_type)
-        if label is not None:
-            labels.append(label)
+        result = _compute_single_label(current, filled_prices, threshold=threshold, window=window)
+        if result is not None:
+            result["fuel_type"] = fuel_type
+            labels.append(result)
+        else:
+            logger.debug("Label uretilemedi: %s %s (veri yetersiz)", fuel_type, current)
         current += timedelta(days=1)
 
     if not labels:
-        logger.warning("Hiç label üretilemedi: %s [%s → %s]", fuel_type, start_date, end_date)
-        return _empty_dataframe()
+        return _empty_dataframe(fuel_type)
 
     df = pd.DataFrame(labels)
-
-    # Tip dönüşümleri
-    df["run_date"] = pd.to_datetime(df["run_date"]).dt.date
-    df["label_window_end"] = pd.to_datetime(df["label_window_end"]).dt.date
-    df["y_binary"] = df["y_binary"].astype(int)
-    df["first_event_direction"] = df["first_event_direction"].astype(int)
+    # Kolon siralamasi
+    col_order = [
+        "run_date", "fuel_type", "y_binary", "first_event_direction",
+        "first_event_amount", "first_event_type", "net_amount_3d",
+        "ref_price", "label_window_end",
+    ]
+    df = df[col_order]
 
     logger.info(
-        "Label üretimi tamamlandı: %s — %d satır, %d pozitif (%.1f%%)",
-        fuel_type,
+        "Label uretimi tamamlandi: %d satir, y_binary=1 orani: %.1f%%",
         len(df),
-        df["y_binary"].sum(),
-        100 * df["y_binary"].mean() if len(df) > 0 else 0,
+        (df["y_binary"].sum() / len(df) * 100) if len(df) > 0 else 0,
     )
 
     return df
 
 
-def compute_labels_all_fuels(
+def _empty_dataframe(fuel_type: str) -> pd.DataFrame:
+    """Bos ama dogru kolonlara sahip DataFrame."""
+    return pd.DataFrame(columns=[
+        "run_date", "fuel_type", "y_binary", "first_event_direction",
+        "first_event_amount", "first_event_type", "net_amount_3d",
+        "ref_price", "label_window_end",
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Tum yakit tipleri icin toplu uretim
+# ---------------------------------------------------------------------------
+
+def compute_all_labels(
     start_date: date,
     end_date: date,
-    conn: psycopg2.extensions.connection | None = None,
+    dsn: str = DB_DSN,
+    threshold: Decimal = THRESHOLD,
+    window: int = LABEL_WINDOW_DAYS,
 ) -> pd.DataFrame:
-    """3 yakıt tipi için label üretir ve birleştirir."""
-    frames: list[pd.DataFrame] = []
-    for ft in sorted(VALID_FUEL_TYPES):
-        df = compute_labels(ft, start_date, end_date, conn=conn)
-        if not df.empty:
-            frames.append(df)
-    if not frames:
-        return _empty_dataframe()
-    return pd.concat(frames, ignore_index=True)
-
-
-def _empty_dataframe() -> pd.DataFrame:
-    """Boş ama doğru kolonlara sahip DataFrame döner."""
-    return pd.DataFrame(
-        columns=[
-            "run_date",
-            "fuel_type",
-            "y_binary",
-            "first_event_direction",
-            "first_event_amount",
-            "first_event_type",
-            "net_amount_3d",
-            "ref_price",
-            "label_window_end",
-        ]
-    )
+    """3 yakit tipi icin label uretip birlestirir."""
+    frames = []
+    for ft in VALID_FUEL_TYPES:
+        df = compute_labels(ft, start_date, end_date, dsn=dsn, threshold=threshold, window=window)
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True) if frames else _empty_dataframe("benzin")

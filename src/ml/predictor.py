@@ -156,10 +156,10 @@ class MLPredictor:
             raise RuntimeError("Model yuklu degil — once load_model() cagirilmali")
 
         try:
-            # Feature vektor olustur
-            X = np.array(
-                [features_dict_to_array(features)], dtype=np.float64
-            )
+            # Feature vektor olustur — model'in feature_names listesini kullan
+            model_features = self._model_pair.feature_names or FEATURE_NAMES
+            feature_vector = [features.get(name, 0.0) for name in model_features]
+            X = np.array([feature_vector], dtype=np.float64)
 
             # Siniflandirma
             clf = self._model_pair.classifier

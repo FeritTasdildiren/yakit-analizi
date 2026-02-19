@@ -23,6 +23,7 @@ from src.models import (
     ThresholdConfig,
     RegimeEvent
 )
+from src.models.predictions_v5 import PredictionV5
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -157,7 +158,10 @@ def _fetch_prediction_history(fuel_type: str, days: int):
                 "p_cut": to_float(d.probability_cut),
                 "predicted": d.predicted_direction,
                 "expected_change": to_float(d.expected_change_tl),
-                "actual_change": price_map.get(d.prediction_date, 0.0)
+                "actual_change": price_map.get(d.prediction_date, 0.0),
+                "model_version": getattr(d, "model_version", None),
+                "stage1_probability": to_float(getattr(d, "stage1_probability", None)),
+                "alarm_triggered": getattr(d, "alarm_triggered", False),
             }
             for d in data
         ]
@@ -190,6 +194,8 @@ def _fetch_telegram_users(status: str = "all"):
             query = query.where(TelegramUser.is_approved == False)
         elif status == "approved":
             query = query.where(TelegramUser.is_approved == True)
+        elif status == "active":
+            query = query.where(TelegramUser.is_active == True)
 
         result = session.execute(query)
         data = result.scalars().all()
@@ -289,6 +295,7 @@ def get_latest_prediction(fuel_type: str):
             "direction": data.predicted_direction,
             "prob_hike": to_float(data.probability_hike),
             "prob_stable": to_float(data.probability_stable),
+            "prob_cut": to_float(data.probability_cut),
             "expected_change": to_float(data.expected_change_tl),
             "model": data.model_version,
             "date": data.prediction_date,
@@ -334,3 +341,80 @@ def get_system_status():
     except Exception:
         pass
     return None
+
+
+# --- v5 Prediction Fetchers ---
+
+def _fetch_latest_prediction_v5(fuel_type: str):
+    """predictions_v5 tablosundan son tahmin."""
+    with Session(engine) as session:
+        result = session.execute(
+            select(PredictionV5)
+            .where(
+                PredictionV5.fuel_type == fuel_type,
+                PredictionV5.model_version != "v5-backfill",
+            )
+            .order_by(desc(PredictionV5.run_date))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+
+def _fetch_prediction_v5_history(fuel_type: str, days: int):
+    """predictions_v5 tablosundan gecmis tahminler."""
+    start_date = datetime.now().date() - timedelta(days=days)
+    with Session(engine) as session:
+        result = session.execute(
+            select(PredictionV5)
+            .where(
+                PredictionV5.fuel_type == fuel_type,
+                PredictionV5.run_date >= start_date,
+            )
+            .order_by(PredictionV5.run_date)
+        )
+        data = result.scalars().all()
+        return [
+            {
+                "date": d.run_date,
+                "fuel_type": d.fuel_type,
+                "stage1_probability": to_float(d.stage1_probability),
+                "stage1_label": d.stage1_label,
+                "first_event_direction": d.first_event_direction,
+                "first_event_amount": to_float(d.first_event_amount),
+                "first_event_type": d.first_event_type,
+                "net_amount_3d": to_float(d.net_amount_3d),
+                "model_version": d.model_version,
+                "calibration_method": d.calibration_method,
+                "alarm_triggered": d.alarm_triggered,
+                "alarm_message": d.alarm_message,
+            }
+            for d in data
+        ]
+
+
+@st.cache_data(ttl=60)
+def get_latest_prediction_v5(fuel_type: str):
+    """v5 son tahmin (cache'li)."""
+    data = _fetch_latest_prediction_v5(fuel_type)
+    if data:
+        return {
+            "stage1_probability": to_float(data.stage1_probability),
+            "stage1_label": data.stage1_label,
+            "first_event_direction": data.first_event_direction,
+            "first_event_amount": to_float(data.first_event_amount),
+            "first_event_type": data.first_event_type,
+            "net_amount_3d": to_float(data.net_amount_3d),
+            "model_version": data.model_version,
+            "calibration_method": data.calibration_method,
+            "alarm_triggered": data.alarm_triggered,
+            "alarm_message": data.alarm_message,
+            "date": data.run_date,
+        }
+    return None
+
+
+@st.cache_data(ttl=300)
+def get_prediction_v5_history_df(fuel_type: str, days: int = 60):
+    """v5 tahmin gecmisi DataFrame (cache'li)."""
+    data = _fetch_prediction_v5_history(fuel_type, days)
+    return pd.DataFrame(data)

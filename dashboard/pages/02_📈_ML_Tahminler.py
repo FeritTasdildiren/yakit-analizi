@@ -4,83 +4,158 @@ from auth import check_auth, logout
 check_auth()
 
 import streamlit as st
-import sys
-import os
 import pandas as pd
 
 # Path setup
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from dashboard.components.data_fetcher import (
-    get_latest_prediction, 
-    get_prediction_history_df
+    get_latest_prediction_v5,
+    get_prediction_v5_history_df,
 )
 from dashboard.components.charts import (
-    create_probability_bar, 
-    create_shap_chart, 
-    create_prediction_history
+    create_v5_probability_gauge,
+    create_v5_prediction_history,
 )
 
 
 st.title("📈 ML Tahmin Analizi")
 
-# --- Veri Cekme ---
-pred_benzin = get_latest_prediction("benzin")
-hist_benzin = get_prediction_history_df("benzin", 30)
+st.markdown(
+    '<div class="info-box">'
+    '<span class="info-title">ℹ️ v5 ML Predictor</span><br>'
+    '<b>Fiyat Degisim Olasiligi:</b> Binary siniflandirma — fiyat degisecek mi? '
+    '0-100% arasinda kalibre edilmis olasilik.<br>'
+    '<b>Ilk Hareket:</b> Model degisim ongoruyorsa, beklenen ilk hareket tutari ve yonu.<br>'
+    '<b>3 Gun Net:</b> 3 gunluk kumulatif net fiyat etkisi (artis/dusus).<br>'
+    '<b>Alarm Esigi:</b> %25 uzerinde degisim bekleniyor sinyali (hibrit alarm: ML + deterministik + anomali).'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
-pred_motorin = get_latest_prediction("motorin")
-hist_motorin = get_prediction_history_df("motorin", 30)
+# ── Yardimci Sabitler ──────────────────────────────────────────────────
 
-# --- Helper Function ---
-def render_prediction_card(fuel_type, data, history_df):
-    if not data:
-        st.warning(f"{fuel_type.capitalize()} için tahmin verisi bulunamadı.")
+_EVENT_TYPE_TR = {
+    "artis": ("ZAM", "#EF4444", "⬆️"),
+    "dusus": ("INDIRIM", "#22C55E", "⬇️"),
+}
+
+_FUEL_ICONS = {"benzin": "⛽", "motorin": "⛽", "lpg": "🔥"}
+
+
+# ── v5 Render Fonksiyonlari ────────────────────────────────────────────
+
+def render_v5_card(fuel_type, v5_data):
+    """v5 tahmin kartini render eder (HTML/CSS)."""
+    if not v5_data:
+        st.info(f"{fuel_type.capitalize()} icin v5 tahmin verisi bulunamadi.")
         return
 
-    # Kart Basligi
-    direction_map = {
-        "hike": ("ZAM", "red", "⬆️"),
-        "cut": ("İNDİRİM", "green", "⬇️"),
-        "stable": ("SABİT", "orange", "➡️")
-    }
-    
-    direction, color, icon = direction_map.get(data["direction"], ("BİLİNMİYOR", "gray", "❓"))
-    prob = max(data["prob_hike"], data["prob_stable"], data["prob_cut"])
-    
-    st.markdown(f"""
-    <div style="padding: 20px; border-radius: 10px; background-color: #262730; margin-bottom: 20px;">
-        <h3 style="color: {color}; margin-top: 0;">{icon} {fuel_type.capitalize()}: {direction} (%{prob*100:.1f})</h3>
-        <p>Beklenen Değişim: <b>{data['expected_change'] if data['expected_change'] else '-'} TL</b></p>
-        <p style="font-size: 0.8em; color: #888;">Model: {data['model']} | Tarih: {data['date']}</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Olasilik Bar
-    st.subheader("Olasılık Dağılımı")
-    fig_prob = create_probability_bar(data["prob_hike"], data["prob_stable"], data["prob_cut"])
-    st.plotly_chart(fig_prob, use_container_width=True, config={'displayModeBar': False})
-    
-    # SHAP
-    st.subheader("Etkileyen Faktörler (SHAP)")
-    if data["shap"]:
-        fig_shap = create_shap_chart(data["shap"])
-        st.plotly_chart(fig_shap, use_container_width=True, config={'displayModeBar': False})
-    else:
-        st.info("SHAP açıklaması mevcut değil.")
-        
-    # Gecmis
-    st.subheader("Tahmin Geçmişi (30 Gün)")
-    if not history_df.empty:
-        fig_hist = create_prediction_history(history_df, f"{fuel_type.capitalize()} Tahmin Geçmişi")
-        st.plotly_chart(fig_hist, use_container_width=True)
-    else:
-        st.info("Geçmiş veri yok.")
+    prob = v5_data.get("stage1_probability")
+    prob_pct = prob * 100 if prob is not None else 0
 
-# --- Layout ---
-tab1, tab2 = st.tabs(["⛽ Benzin", "⛽ Motorin"])
+    first_type = v5_data.get("first_event_type")
+    first_amount = v5_data.get("first_event_amount")
+    net_amount = v5_data.get("net_amount_3d")
+
+    event_label, event_color, event_icon = _EVENT_TYPE_TR.get(
+        first_type, ("SABIT", "#F59E0B", "➡️")
+    )
+
+    alarm_triggered = v5_data.get("alarm_triggered", False)
+    alarm_msg = v5_data.get("alarm_message", "")
+
+    first_str = f"{abs(first_amount):.2f} TL/L" if first_amount else "-"
+    net_str = f"{abs(net_amount):.2f} TL/L" if net_amount else "-"
+    net_dir = ""
+    if net_amount:
+        net_dir = " (artis)" if net_amount > 0 else " (dusus)"
+
+    calib = v5_data.get("calibration_method", "raw")
+    run_date = v5_data.get("date", "-")
+
+    st.markdown(
+        f'<div style="padding:1.5rem;border-radius:10px;background-color:#1E293B;'
+        f'margin-bottom:1.5rem;border-left:5px solid {event_color};">'
+        f'<h3 style="color:{event_color};margin-top:0;">'
+        f'{event_icon} {fuel_type.capitalize()}: {event_label}</h3>'
+        f'<div style="display:flex;gap:2rem;flex-wrap:wrap;">'
+        f'<div><span style="color:#9CA3AF;font-size:0.85rem;">Olasilik (Kalibre)</span>'
+        f'<div style="font-size:1.5rem;font-weight:bold;color:{event_color}">%{prob_pct:.1f}</div></div>'
+        f'<div><span style="color:#9CA3AF;font-size:0.85rem;">Ilk Hareket</span>'
+        f'<div style="font-size:1.2rem;font-weight:bold;">{first_str}</div></div>'
+        f'<div><span style="color:#9CA3AF;font-size:0.85rem;">3 Gun Net</span>'
+        f'<div style="font-size:1.2rem;font-weight:bold;">{net_str}{net_dir}</div></div>'
+        f'<div><span style="color:#9CA3AF;font-size:0.85rem;">Kalibrasyon</span>'
+        f'<div style="font-size:1rem;">{calib}</div></div>'
+        f'<div><span style="color:#9CA3AF;font-size:0.85rem;">Tarih</span>'
+        f'<div style="font-size:1rem;">{run_date}</div></div>'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    # Alarm mesaji (varsa)
+    if alarm_triggered and alarm_msg:
+        if "Alarm" in alarm_msg:
+            alarm_color = "#EF4444"
+        elif "Uyar" in alarm_msg:
+            alarm_color = "#F59E0B"
+        else:
+            alarm_color = "#3B82F6"
+        st.markdown(
+            f'<div style="padding:1rem;border-radius:8px;'
+            f'background-color:rgba(239,68,68,0.1);border:1px solid {alarm_color};'
+            f'margin-bottom:1rem;">'
+            f'<strong style="color:{alarm_color};">🔔 Alarm:</strong> '
+            f'{alarm_msg}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def render_v5_tab(fuel_type):
+    """Tek yakit turu icin tam v5 tab icerigini render eder."""
+
+    # 1) Veri cek
+    v5_data = get_latest_prediction_v5(fuel_type)
+    v5_history = get_prediction_v5_history_df(fuel_type, 60)
+
+    # 2) Ana tahmin karti
+    render_v5_card(fuel_type, v5_data)
+
+    # 3) Olasilik gauge
+    st.subheader("Fiyat Degisim Olasiligi")
+    prob = v5_data.get("stage1_probability") if v5_data else None
+    fig_gauge = create_v5_probability_gauge(prob, fuel_type)
+    st.plotly_chart(
+        fig_gauge,
+        use_container_width=True,
+        config={"displayModeBar": False},
+        key=f"{fuel_type}_v5_prob_gauge",
+    )
+
+    # 4) Tahmin gecmisi
+    hist_count = len(v5_history) if isinstance(v5_history, pd.DataFrame) and not v5_history.empty else 0
+    st.subheader(f"Tahmin Gecmisi ({hist_count} Kayit)")
+    if hist_count > 0 and hist_count < 3:
+        st.info("📊 Backfill verileri dahil. Kesikli cizgi=simulasyon, duz cizgi=gercek tahmin.")
+    fig_hist = create_v5_prediction_history(v5_history, fuel_type)
+    st.plotly_chart(
+        fig_hist,
+        use_container_width=True,
+        config={"displayModeBar": False},
+        key=f"{fuel_type}_v5_pred_history",
+    )
+
+
+# ── Sayfa Layout ───────────────────────────────────────────────────────
+
+tab1, tab2, tab3 = st.tabs(["⛽ Benzin", "⛽ Motorin", "🔥 LPG"])
 
 with tab1:
-    render_prediction_card("benzin", pred_benzin, hist_benzin)
+    render_v5_tab("benzin")
 
 with tab2:
-    render_prediction_card("motorin", pred_motorin, hist_motorin)
+    render_v5_tab("motorin")
+
+with tab3:
+    render_v5_tab("lpg")

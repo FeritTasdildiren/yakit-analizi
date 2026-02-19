@@ -8,7 +8,7 @@ Tüm endpoint'ler /api/v1/risk prefix'i altındadır.
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -48,7 +48,7 @@ class RiskScoreResponse(BaseModel):
     threshold_breach_component: Decimal
     trend_momentum_component: Decimal
     system_mode: str
-    created_at: str
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
