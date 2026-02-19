@@ -131,7 +131,6 @@ async def _calculate_streak(fuel_type: str) -> dict:
                        first_event_type
                 FROM predictions_v5
                 WHERE fuel_type = :fuel_type
-                  AND first_event_type != 'none'
                 ORDER BY run_date DESC
                 LIMIT 10
             """)
