@@ -113,14 +113,14 @@ async def _calculate_streak(fuel_type: str) -> dict:
         {
             "streak_count": int,
             "direction": "artis" | "dusus" | None,
-            "avg_amount": float,
+            "latest_amount": float,
             "amounts": list[float],
         }
     """
     result = {
         "streak_count": 0,
         "direction": None,
-        "avg_amount": 0.0,
+        "latest_amount": 0.0,
         "amounts": [],
     }
 
@@ -180,7 +180,7 @@ async def _calculate_streak(fuel_type: str) -> dict:
     if streak_count > 0 and amounts:
         result["streak_count"] = streak_count
         result["direction"] = streak_direction
-        result["avg_amount"] = sum(amounts) / len(amounts)
+        result["latest_amount"] = amounts[0]
         result["amounts"] = amounts
 
     return result
@@ -262,7 +262,7 @@ def _format_fuel_streak(
 
     streak_count = streak.get("streak_count", 0)
     direction = streak.get("direction")
-    avg_amount = streak.get("avg_amount", 0.0)
+    latest_amount = streak.get("latest_amount", 0.0)
 
     # Sinyal yok
     if streak_count == 0 or direction is None:
@@ -290,7 +290,7 @@ def _format_fuel_streak(
     return (
         f"{header}\n"
         f"   {emoji} {type_label}: %{probability} ({gun_str})\n"
-        f"   💰 {change_label}: ~{avg_amount:.2f} TL/L"
+        f"   💰 {change_label}: ~{latest_amount:.2f} TL/L"
     )
 
 
@@ -350,7 +350,7 @@ async def format_daily_notification() -> str:
         streak = await _calculate_streak(fuel_type)
         streak_count = streak.get("streak_count", 0)
         direction = streak.get("direction")
-        avg_amount = streak.get("avg_amount", 0.0)
+        latest_amount = streak.get("latest_amount", 0.0)
 
         if streak_count == 0 or direction is None:
             lines.append(f"⛽ {label}: Sabit ✅")
@@ -359,12 +359,12 @@ async def format_daily_notification() -> str:
             if direction == "artis":
                 lines.append(
                     f"⛽ {label}: 🔴 %{probability} Zam Olasılığı "
-                    f"(~{avg_amount:.2f} TL)"
+                    f"(~{latest_amount:.2f} TL)"
                 )
             else:
                 lines.append(
                     f"⛽ {label}: 🟢 %{probability} İndirim Olasılığı "
-                    f"(~{avg_amount:.2f} TL)"
+                    f"(~{latest_amount:.2f} TL)"
                 )
 
     lines.append("\nDetay → /rapor")
