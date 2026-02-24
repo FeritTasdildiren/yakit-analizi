@@ -47,28 +47,31 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=settings.PREDICTION_HOUR, minute=35),
     },
     # ── Sabah Pipeline ──────────────────────────────────────────────────
-    # 08:00 TSİ — sabah güncel veri
+    # 10:15 TSİ — sabah güncel veri
     "collect-morning-market-data": {
         "task": "src.celery_app.tasks.collect_daily_market_data",
         "schedule": crontab(
-            hour=settings.MORNING_DATA_FETCH_HOUR, minute=0,
+            hour=settings.MORNING_DATA_FETCH_HOUR,
+            minute=settings.MORNING_DATA_FETCH_MINUTE,
         ),
     },
-    # 08:10 TSİ — sabah MBE hesaplama
+    # 10:25 TSİ — sabah MBE hesaplama
     "calculate-morning-mbe": {
         "task": "src.celery_app.tasks.calculate_daily_mbe",
         "schedule": crontab(
-            hour=settings.MORNING_DATA_FETCH_HOUR, minute=10,
+            hour=settings.MORNING_DATA_FETCH_HOUR,
+            minute=settings.MORNING_DATA_FETCH_MINUTE + 10,
         ),
     },
-    # 08:20 TSİ — sabah risk hesaplama
+    # 10:35 TSİ — sabah risk hesaplama
     "calculate-morning-risk": {
         "task": "src.celery_app.tasks.calculate_daily_risk",
         "schedule": crontab(
-            hour=settings.MORNING_DATA_FETCH_HOUR, minute=20,
+            hour=settings.MORNING_DATA_FETCH_HOUR,
+            minute=settings.MORNING_DATA_FETCH_MINUTE + 20,
         ),
     },
-    # 08:30 TSİ — sabah tahmin güncelleme
+    # 10:45 TSİ — sabah tahmin güncelleme
     "run-morning-prediction": {
         "task": "src.celery_app.tasks.run_daily_prediction",
         "schedule": crontab(
@@ -76,11 +79,12 @@ CELERY_BEAT_SCHEDULE = {
             minute=settings.MORNING_PREDICTION_MINUTE,
         ),
     },
-    # 08:35 TSİ — sabah v5 tahmin
+    # 10:50 TSİ — sabah v5 tahmin
     "run-morning-prediction-v5": {
         "task": "src.celery_app.tasks.run_daily_prediction_v5",
         "schedule": crontab(
-            hour=settings.MORNING_PREDICTION_HOUR, minute=35,
+            hour=settings.MORNING_PREDICTION_HOUR,
+            minute=settings.MORNING_PREDICTION_MINUTE + 5,
         ),
     },
     # ── Bildirimler ─────────────────────────────────────────────────────
@@ -92,12 +96,12 @@ CELERY_BEAT_SCHEDULE = {
             minute=0,
         ),
     },
-    # 18:00 TSİ — akşam bildirim (güncel durum)
+    # 18:45 TSİ — akşam bildirim (akşam pipeline tamamlandıktan sonra)
     "send-evening-notifications": {
         "task": "src.celery_app.tasks.send_evening_notifications",
         "schedule": crontab(
             hour=settings.TELEGRAM_EVENING_NOTIFICATION_HOUR,
-            minute=0,
+            minute=settings.TELEGRAM_EVENING_NOTIFICATION_MINUTE,
         ),
     },
     # ── Sağlık Kontrolü ────────────────────────────────────────────────

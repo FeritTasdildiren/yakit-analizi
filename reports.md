@@ -112,3 +112,24 @@
 | 3 | TCMB EVDS API anahtarı | YÜKSEK | Production'da Yahoo fallback yeterli değil |
 | 4 | Celery task: LPG tahmin | DÜŞÜK | `run_daily_prediction` sadece benzin/motorin yapıyor |
 | 5 | Alembic migration merge | ORTA | 004 branching migration, production'da `alembic merge heads` |
+
+---
+
+## 2026-02-24 — Zamanlama Denetimi ve Düzeltmeleri
+
+| Alan | Değer |
+|------|-------|
+| **Durum** | 🟢 TAMAMLANDI |
+| **Başlangıç** | 2026-02-24 |
+| **Etkilenen Dosyalar** | `src/celery_app/tasks.py`, `src/celery_app/beat_schedule.py`, `src/config/settings.py`, `CLAUDE.md` |
+
+### Yapılanlar
+- [x] Celery zamanlama yapılandırması incelendi (beat_schedule.py, tasks.py, settings.py, celery_config.py)
+- [x] CLAUDE.md'deki zamanlama tablosu düzeltildi (yanlış UTC → doğru TSİ, sabah/akşam pipeline eklendi)
+- [x] Task docstring'lerdeki 5 yanlış UTC referansı TSİ olarak düzeltildi
+- [x] Hardcoded DB URL (şifre dahil) `_calculate_mbe_sync()` ve `_calculate_risk_sync()` içinden kaldırıldı → `settings.sync_database_url` kullanıldı
+- [x] Akşam bildirim saati 18:00 → 18:45'e alındı (pipeline bitmeden bildirim gitmesini önlemek için)
+- [x] `TELEGRAM_EVENING_NOTIFICATION_MINUTE` ayarı settings.py'ye eklendi
+
+### Sonuç
+4 sorun tespit edilip düzeltildi. 710 test başarılı, mevcut test sonuçlarını değiştiren bir etki yok.

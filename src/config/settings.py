@@ -39,18 +39,20 @@ class Settings(BaseSettings):
     # Tahmin çalıştırma saati (TSİ - İstanbul saati). 18:30 TSİ
     PREDICTION_HOUR: int = 18
     PREDICTION_MINUTE: int = 30
-    # Sabah bildirim gönderme saati (TSİ - İstanbul saati). 10:00 TSİ
-    NOTIFICATION_HOUR: int = 10
-    # Sabah veri çekme saati (TSİ - İstanbul saati). 08:00 TSİ
-    MORNING_DATA_FETCH_HOUR: int = 8
-    # Sabah tahmin saati (TSİ - İstanbul saati). 08:30 TSİ
-    MORNING_PREDICTION_HOUR: int = 8
-    MORNING_PREDICTION_MINUTE: int = 30
+    # Sabah bildirim gönderme saati (TSİ - İstanbul saati). 11:00 TSİ
+    NOTIFICATION_HOUR: int = 11
+    # Sabah veri çekme saati (TSİ - İstanbul saati). 10:15 TSİ
+    MORNING_DATA_FETCH_HOUR: int = 10
+    MORNING_DATA_FETCH_MINUTE: int = 15
+    # Sabah tahmin saati (TSİ - İstanbul saati). 10:45 TSİ
+    MORNING_PREDICTION_HOUR: int = 10
+    MORNING_PREDICTION_MINUTE: int = 45
 
     # --- Telegram Bot ---
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_DAILY_NOTIFICATION_HOUR: int = 10  # TSİ - İstanbul saati (10:00 TSİ)
-    TELEGRAM_EVENING_NOTIFICATION_HOUR: int = 18  # TSİ - İstanbul saati (18:00 TSİ)
+    TELEGRAM_EVENING_NOTIFICATION_HOUR: int = 18  # TSİ - İstanbul saati
+    TELEGRAM_EVENING_NOTIFICATION_MINUTE: int = 45  # Pipeline bittikten sonra (18:45 TSİ)
 
     # --- Yeniden Deneme ---
     RETRY_COUNT: int = 3

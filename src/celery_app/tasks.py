@@ -195,7 +195,7 @@ def run_daily_prediction(self):
     """
     Günlük ML tahmin çalıştır: benzin, motorin, LPG.
 
-    Zamanlama: Her gün 18:30 UTC (21:30 TSİ)
+    Zamanlama: Her gün 18:30 TSİ (İstanbul saati)
     Retry: 2 deneme, 2 dakika aralıkla.
     """
     logger.info("Günlük ML tahmin başlıyor...")
@@ -494,7 +494,7 @@ def send_evening_notifications(self):
     """
     Onaylı Telegram kullanıcılarına akşam bildirim gönder.
 
-    Zamanlama: Her gün 18:00 TSİ (İstanbul saati)
+    Zamanlama: Her gün 18:45 TSİ (akşam pipeline tamamlandıktan sonra)
     Aynı bildirim mantığını kullanır (sabahla aynı _send_notifications).
     Retry: 2 deneme, 1 dakika aralıkla.
     """
@@ -517,7 +517,7 @@ def calculate_daily_mbe(self):
     """
     Günlük MBE hesaplama: cost_base_snapshots + mbe_calculations.
 
-    Zamanlama: Veri toplamadan 10 dk sonra (18:10 / 05:10 UTC).
+    Zamanlama: Veri toplamadan 10 dk sonra (18:10 / 08:10 TSİ).
     daily_market_data ve tax_parameters üzerinden hesaplama yapar.
     """
     logger.info("Günlük MBE hesaplama başlıyor...")
@@ -537,7 +537,7 @@ def _calculate_mbe_sync() -> dict:
     import psycopg2.extras
     from decimal import ROUND_HALF_UP
 
-    DB_URL = "postgresql://yakit_analizi:yakit2026secure@localhost:5433/yakit_analizi"
+    DB_URL = settings.sync_database_url
     RHO = {"benzin": Decimal("1180"), "motorin": Decimal("1190"), "lpg": Decimal("1750")}
     PRECISION = Decimal("0.00000001")
     FUEL_TYPES = ["benzin", "motorin", "lpg"]
@@ -726,7 +726,7 @@ def calculate_daily_risk(self):
     """
     Günlük risk skoru hesaplama.
 
-    Zamanlama: MBE hesaplamasından 10 dk sonra (18:20 / 05:20 UTC).
+    Zamanlama: MBE hesaplamasından 10 dk sonra (18:20 / 08:20 TSİ).
     MBE, FX volatilite, politik gecikme, threshold breach, trend momentum.
     """
     logger.info("Günlük risk hesaplama başlıyor...")
@@ -744,7 +744,7 @@ def _calculate_risk_sync() -> dict:
     import math
     import psycopg2
 
-    DB_URL = "postgresql://yakit_analizi:yakit2026secure@localhost:5433/yakit_analizi"
+    DB_URL = settings.sync_database_url
     FUEL_TYPES = ["benzin", "motorin", "lpg"]
     WJ = '{"mbe": "0.30", "fx_volatility": "0.15", "political_delay": "0.20", "threshold_breach": "0.20", "trend_momentum": "0.15"}'
 
@@ -912,8 +912,8 @@ def run_daily_prediction_v5(self):
     v5 pipeline: feature -> stage-1 -> kalibrasyon -> stage-2 -> alarm -> DB.
     v1 korunur, v5 yan yana çalışır.
 
-    Zamanlama: Akşam 18:35 UTC (21:35 TSİ) — v1'den 5 dk sonra
-               Sabah 05:35 UTC (08:35 TSİ) — sabah v1'den 5 dk sonra
+    Zamanlama: Akşam 18:35 TSİ — v1'den 5 dk sonra
+               Sabah 08:35 TSİ — sabah v1'den 5 dk sonra
     """
     logger.info("v5 günlük ML tahmin başlıyor...")
 

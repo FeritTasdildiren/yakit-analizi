@@ -98,3 +98,9 @@
 - [KARAR] Hardcoded token'lar .env'ye taşınmalı, settings.py'de boş string default
 - [UYARI] Git geçmişinde hardcoded secret kalır → Token revoke edilmeli
 - [UYARI] API key plain text saklama güvenlik açığı → SHA-256 hash + prefix pattern kullan
+
+## [2026-02-24] - Celery Zamanlama Denetimi
+- [HATA] CLAUDE.md ve docstring'lerde saatler "UTC" olarak yazılmıştı ama Celery `timezone="Europe/Istanbul"` kullandığı için tüm crontab saatleri TSİ → Dokümantasyon TSİ olarak düzeltildi
+- [HATA] `_calculate_mbe_sync()` ve `_calculate_risk_sync()` içinde DB URL ve şifre hardcoded yazılmıştı → `settings.sync_database_url` ile değiştirildi. Hardcoded credential asla kabul edilemez.
+- [PATTERN] `enable_utc=True` + `timezone="Europe/Istanbul"` birlikte kullanılabilir — Celery dahili olarak UTC tutar ama crontab'ları belirtilen timezone'da yorumlar
+- [UYARI] Bildirim task'ı veri toplama task'ıyla aynı saate planlanmamalı — pipeline tamamlanmadan bildirim gönderilir. Arada en az 10 dk buffer bırak

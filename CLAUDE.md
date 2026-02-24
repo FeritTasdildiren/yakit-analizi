@@ -592,9 +592,29 @@ uv run pytest tests/ --cov=src --cov-report=html
 
 ### 12. Celery Beat Zamanlama
 
-| Görev | Zamanlama | UTC | TSİ (UTC+3) |
-|-------|-----------|-----|-------------|
-| Veri Toplama (Brent, FX, EPDK) | Her gün | 18:00 | 21:00 |
-| ML Tahmin | Her gün | 18:30 | 21:30 |
-| Günlük Bildirim | Her gün | 07:00 | 10:00 |
-| Sağlık Kontrolü | Her 30 dk | */30 | */30 |
+> **Not:** Celery `timezone="Europe/Istanbul"` kullanır. Tüm crontab saatleri doğrudan **TSİ**'dir.
+
+#### Akşam Pipeline (Ana)
+| Görev | Saat (TSİ) | Açıklama |
+|-------|-----------|----------|
+| Veri Toplama (Brent, FX, EPDK) | 18:00 | Piyasalar kapandıktan sonra |
+| MBE Hesaplama | 18:10 | Veri toplamadan 10 dk sonra |
+| Risk Hesaplama | 18:20 | MBE'den 10 dk sonra |
+| ML Tahmin v1 | 18:30 | Benzin, motorin, LPG |
+| ML Tahmin v5 | 18:35 | v1'den 5 dk sonra |
+| Akşam Bildirim (Telegram) | 18:45 | Pipeline tamamlandıktan sonra |
+
+#### Sabah Pipeline (Güncelleme)
+| Görev | Saat (TSİ) | Açıklama |
+|-------|-----------|----------|
+| Sabah Veri Toplama | 10:15 | Güncel piyasa verisi |
+| Sabah MBE Hesaplama | 10:25 | |
+| Sabah Risk Hesaplama | 10:35 | |
+| Sabah ML Tahmin v1 | 10:45 | |
+| Sabah ML Tahmin v5 | 10:50 | |
+| Sabah Bildirim (Telegram) | 11:00 | Pipeline tamamlandıktan sonra |
+
+#### Sağlık Kontrolü
+| Görev | Zamanlama |
+|-------|-----------|
+| Sistem Sağlık Kontrolü (DB, Redis, ML) | Her 30 dakikada bir |
