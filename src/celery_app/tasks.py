@@ -588,6 +588,20 @@ def _calculate_mbe_sync() -> dict:
             cif_d = _sd(cif) if cif else (brent_d * Decimal("7.33")).quantize(PRECISION, rounding=ROUND_HALF_UP)
             pump_d = _sd(pump) if pump else Decimal("0")
 
+            # Fiyat değişimi tespiti — önceki günün pompa fiyatıyla karşılaştır
+            price_changed = False
+            if pump_d:
+                cur.execute(
+                    "SELECT pump_price_tl_lt FROM daily_market_data "
+                    "WHERE fuel_type=%s AND trade_date<%s AND pump_price_tl_lt IS NOT NULL "
+                    "ORDER BY trade_date DESC LIMIT 1",
+                    (ft, today)
+                )
+                prev_pump_row = cur.fetchone()
+                if prev_pump_row:
+                    prev_pump_d = _sd(prev_pump_row[0])
+                    price_changed = abs(pump_d - prev_pump_d) > Decimal("0.01")
+
             # Tax param
             tp = find_tax(ft, today)
             if not tp:
@@ -642,15 +656,7 @@ def _calculate_mbe_sync() -> dict:
             )
             prev_nc = [Decimal(str(r[0])) for r in cur.fetchall()][::-1]  # eski→yeni
 
-            # nc_base: son fiyat değişimindeki SMA
-            cur.execute(
-                "SELECT nc_base FROM mbe_calculations WHERE fuel_type=%s AND trade_date<%s ORDER BY trade_date DESC LIMIT 1",
-                (ft, today)
-            )
-            prev_base_row = cur.fetchone()
-            nc_base = Decimal(str(prev_base_row[0])) if prev_base_row else nc_fwd
-
-            # SMA-5
+            # SMA-5 (nc_base'den önce hesaplanmalı — fiyat değişiminde nc_base = sma5)
             all_nc = prev_nc + [nc_fwd]
             window5 = all_nc[-5:] if len(all_nc) >= 5 else all_nc
             sma5 = sum(window5) / Decimal(str(len(window5)))
@@ -658,6 +664,22 @@ def _calculate_mbe_sync() -> dict:
             # SMA-10
             window10 = all_nc[-10:] if len(all_nc) >= 10 else all_nc
             sma10 = sum(window10) / Decimal(str(len(window10)))
+
+            # nc_base: fiyat değişiminde SMA-5 ile güncelle, yoksa öncekini koru
+            if price_changed:
+                nc_base = sma5
+                logger.info(
+                    "%s fiyat değişimi tespit edildi: %s → %s, nc_base=%s",
+                    ft, prev_pump_d, pump_d, nc_base,
+                )
+            else:
+                cur.execute(
+                    "SELECT nc_base FROM mbe_calculations "
+                    "WHERE fuel_type=%s AND trade_date<%s ORDER BY trade_date DESC LIMIT 1",
+                    (ft, today)
+                )
+                prev_base_row = cur.fetchone()
+                nc_base = Decimal(str(prev_base_row[0])) if prev_base_row else nc_fwd
 
             # MBE
             mbe_val = (sma5 - nc_base).quantize(PRECISION, rounding=ROUND_HALF_UP)
@@ -678,13 +700,17 @@ def _calculate_mbe_sync() -> dict:
                 if all_nc[-1] > all_nc[-3]: trend = "increase"
                 elif all_nc[-1] < all_nc[-3]: trend = "decrease"
 
-            # since_last_change
-            cur.execute(
-                "SELECT since_last_change_days FROM mbe_calculations WHERE fuel_type=%s AND trade_date<%s ORDER BY trade_date DESC LIMIT 1",
-                (ft, today)
-            )
-            slc_row = cur.fetchone()
-            dslc = (slc_row[0] + 1) if slc_row else 1
+            # since_last_change — fiyat değişiminde sıfırla
+            if price_changed:
+                dslc = 1
+            else:
+                cur.execute(
+                    "SELECT since_last_change_days FROM mbe_calculations "
+                    "WHERE fuel_type=%s AND trade_date<%s ORDER BY trade_date DESC LIMIT 1",
+                    (ft, today)
+                )
+                slc_row = cur.fetchone()
+                dslc = (slc_row[0] + 1) if slc_row else 1
 
             # MBE upsert
             cur.execute("""

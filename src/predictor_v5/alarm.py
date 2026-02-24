@@ -275,7 +275,7 @@ def evaluate_alarm(
             "should_alarm": True,
             "alarm_type": "already_happened",
             "message": msg,
-            "confidence": prob_float,
+            "confidence": 1.0,  # Gerçekleşmiş olay, tahmin değil
             "cooldown_active": cooldown_active,
             "cooldown_remaining_hours": cooldown_remaining_hours,
         }
