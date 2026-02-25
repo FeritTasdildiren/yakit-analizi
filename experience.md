@@ -104,3 +104,13 @@
 - [HATA] `_calculate_mbe_sync()` ve `_calculate_risk_sync()` içinde DB URL ve şifre hardcoded yazılmıştı → `settings.sync_database_url` ile değiştirildi. Hardcoded credential asla kabul edilemez.
 - [PATTERN] `enable_utc=True` + `timezone="Europe/Istanbul"` birlikte kullanılabilir — Celery dahili olarak UTC tutar ama crontab'ları belirtilen timezone'da yorumlar
 - [UYARI] Bildirim task'ı veri toplama task'ıyla aynı saate planlanmamalı — pipeline tamamlanmadan bildirim gönderilir. Arada en az 10 dk buffer bırak
+
+## [2026-02-25] - MBE Reset, Alarm ve Celery Deploy
+- [HATA] `since_last_change_days` sayacı hiç sıfırlanmıyordu → Fiyat değişimi tespiti eklenip sayaç 1'e resetlendi
+- [HATA] `nc_base` fiyat değişiminde güncellenmiyor, eski dengesizliği gösteriyordu → Fiyat değişiminde `nc_base = SMA-5` yapıldı
+- [HATA] `already_happened` alarm confidence ML olasılığından alınıyordu → Gerçekleşmiş olay için `1.0` sabitlendi
+- [HATA] Celery restart'ta `kill` + `head -1` sadece 1 PID öldürüyor, child'lar zombie kalıyor → `pkill -9 -f` ile tüm process grubu öldürülmeli
+- [PATTERN] Fiyat değişimi tespiti: `daily_market_data`'dan önceki günün pompa fiyatıyla karşılaştırma (>0.01 TL fark). `price_changes` tablosuna bağımlı olmamak daha güvenilir.
+- [PATTERN] SMA gibi bağımlı hesaplamalar, kendisine bağlı değişkenlerden (nc_base) önce hesaplanmalı — dependency sırası kritik
+- [UYARI] Sunucuda Celery restart yaparken `bash /var/www/yakit_analiz/restart_celery.sh` kullan — `pkill -9 -f` ile tüm grubu öldürür, schedule temizler, tek instance başlatır
+- [UYARI] `nohup` ile Celery başlatırken SSH oturumunda birden fazla komut çalıştırma — her biri ayrı process başlatabilir

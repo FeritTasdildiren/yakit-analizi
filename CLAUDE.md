@@ -32,7 +32,7 @@
 | **Oluşturma Tarihi** | 2026-02-15 |
 | **Teknoloji Stack** | Python 3.12+, FastAPI, PostgreSQL (asyncpg), Redis, Celery, LightGBM, Streamlit, python-telegram-bot |
 | **Proje Durumu** | FAZ 1+2 TAMAMLANDI (Sprint S0-S5, 24 görev, 531 test) |
-| **Son Güncelleme** | 2026-02-16 |
+| **Son Güncelleme** | 2026-02-25 |
 | **GitHub** | https://github.com/FeritTasdildiren/yakit-analizi |
 
 ---
@@ -159,11 +159,12 @@ Bu CLAUDE.md canlı bir dokümandır. Kod değişikliği yapıp CLAUDE.md'yi gü
 
 | # | Açıklama | Öncelik | Durum |
 |---|----------|---------|-------|
-| 1 | ML tahmin placeholder feature kullanıyor — gerçek DB verisiyle hesaplama entegrasyonu yapılmalı | YÜKSEK | AÇIK |
+| 1 | ~~ML tahmin placeholder feature~~ → `_fetch_and_compute_features()` ile DB'den gerçek veri | YÜKSEK | ÇÖZÜLDÜ |
 | 2 | CORS allow_origins=["*"] — production'da kısıtlanmalı | ORTA | AÇIK |
-| 3 | Celery task'larda sadece benzin/motorin tahmin — LPG ML tahmini eklenmeli | ORTA | AÇIK |
+| 3 | ~~Celery task'larda sadece benzin/motorin tahmin~~ → LPG dahil 3 yakıt tipi destekleniyor | ORTA | ÇÖZÜLDÜ |
 | 4 | TCMB EVDS API key boş — FX sadece Yahoo fallback'ten geliyor | DÜŞÜK | AÇIK |
 | 5 | Faz 3 görevleri (B2B API, ödeme, RBAC, retrain pipeline) yapılmadı | GELECEK | PLANLI |
+| 6 | v1 ML modeli sıfır feature'larda "cut" sapması gösteriyor — v5 ile tutarsız | ORTA | AÇIK |
 
 ---
 
@@ -171,10 +172,9 @@ Bu CLAUDE.md canlı bir dokümandır. Kod değişikliği yapıp CLAUDE.md'yi gü
 
 ### Geliştirmeye Devam Etme
 Öncelikli yapılacaklar:
-1. **ML Feature Integration**: `_get_placeholder_features()` yerine `compute_all_features()` bağlantısı (src/celery_app/tasks.py:200)
-2. **LPG ML Tahmini**: `run_daily_prediction` task'ına lpg ekle (şu an sadece benzin/motorin)
-3. **CORS Kısıtlama**: Production domain'leri belirle
-4. **Faz 3**: B2B REST API, ödeme entegrasyonu, otomatik retrain, RBAC
+1. **v1 ML Modeli "cut" Sapması**: Sıfır feature'larda v1 her zaman "cut" diyor — v5 ile tutarsız, model retrain veya kaldırma gerekebilir
+2. **CORS Kısıtlama**: Production domain'leri belirle
+3. **Faz 3**: B2B REST API, ödeme entegrasyonu, otomatik retrain, RBAC
 
 ### Dikkat Edilmesi Gerekenler
 - Tüm fiyat hesaplamalarında **Decimal** kullan, float YASAK
@@ -183,6 +183,8 @@ Bu CLAUDE.md canlı bir dokümandır. Kod değişikliği yapıp CLAUDE.md'yi gü
 - Celery task'larda async fonksiyonlar `asyncio.run()` wrapper ile çağrılmalı
 - EPDK XML servisi yavaş olabilir, timeout 60s+
 - Telegram bot token `.env`'de, settings.py'de boş string default
+- **Celery restart**: Sunucuda `bash /var/www/yakit_analiz/restart_celery.sh` kullan — `nohup` ile manuel başlatma zombie process riski taşır
+- **MBE hesaplama sırası**: SMA hesaplaması nc_base'den önce yapılmalı (bağımlılık ilişkisi)
 
 ---
 

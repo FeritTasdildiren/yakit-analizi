@@ -133,3 +133,32 @@
 
 ### Sonuç
 4 sorun tespit edilip düzeltildi. 710 test başarılı, mevcut test sonuçlarını değiştiren bir etki yok.
+
+---
+
+## 2026-02-25 — MBE Reset, Alarm Confidence ve Çift Bildirim Düzeltmeleri
+
+| Alan | Değer |
+|------|-------|
+| **Durum** | 🟢 TAMAMLANDI |
+| **Başlangıç** | 2026-02-25 |
+| **Etkilenen Dosyalar** | `src/celery_app/tasks.py`, `src/predictor_v5/alarm.py`, sunucu restart scripti |
+
+### Yapılanlar
+
+#### Bug Fix: Fiyat değişimi sonrası MBE reset (tasks.py)
+- [x] `since_last_change_days` sayacı fiyat değişiminde 1'e sıfırlanıyor (önceden hiç reset yok)
+- [x] `nc_base` fiyat değişiminde SMA-5 ile güncelleniyor (önceden önceki günü kopyalıyordu)
+- [x] Fiyat değişimi tespiti: `daily_market_data`'dan önceki günün pompa fiyatıyla karşılaştırma (>0.01 TL)
+- [x] SMA hesaplaması `nc_base`'den önceye taşındı (dependency fix)
+
+#### Bug Fix: Alarm confidence (alarm.py)
+- [x] `already_happened` alarm'da `confidence` ML olasılığı yerine `1.0` yapıldı
+
+#### Ops: Çift Telegram bildirimi (sunucu)
+- [x] Kök neden: Dünkü 2 deploy'da `kill` sadece 1 PID öldürdü, child process'ler zombie kaldı → 2 beat scheduler çalıştı
+- [x] Tüm zombie Celery process grupları temizlendi, tek instance başlatıldı
+- [x] `/var/www/yakit_analiz/restart_celery.sh` scripti oluşturuldu — `pkill -9 -f` ile tüm grubu öldürür
+
+### Sonuç
+3 bug düzeltildi. MBE benzin/motorin 0.776→0.0, risk 0.276→0.006 (fiyat değişimi doğru yansıtıldı). Çift bildirim sorunu çözüldü.
