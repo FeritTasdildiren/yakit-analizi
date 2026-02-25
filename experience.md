@@ -114,3 +114,6 @@
 - [PATTERN] SMA gibi bağımlı hesaplamalar, kendisine bağlı değişkenlerden (nc_base) önce hesaplanmalı — dependency sırası kritik
 - [UYARI] Sunucuda Celery restart yaparken `bash /var/www/yakit_analiz/restart_celery.sh` kullan — `pkill -9 -f` ile tüm grubu öldürür, schedule temizler, tek instance başlatır
 - [UYARI] `nohup` ile Celery başlatırken SSH oturumunda birden fazla komut çalıştırma — her biri ayrı process başlatabilir
+- [HATA] Celery task'larında `async_session_factory()` (asyncpg) kullanımı event loop çakışması yaratır → `asyncio.run()` kendi loop'unu açar, asyncpg bağlantısı başka loop'a bağlı kalır → "Future attached to a different loop" hatası
+- [PATTERN] Celery task'larında DB erişimi psycopg2 (sync) ile yapılmalı — asyncpg Celery'nin `asyncio.run()` event loop'uyla uyumsuz
+- [PATTERN] Bildirim mesajı oluşturma ve gönderme iki ayrı sync fonksiyon olarak tasarlanmalı → mesaj oluşturma (psycopg2) + gönderim (asyncio.run sadece Telegram API) → SRP + debug kolaylığı

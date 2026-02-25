@@ -160,5 +160,11 @@
 - [x] Tüm zombie Celery process grupları temizlendi, tek instance başlatıldı
 - [x] `/var/www/yakit_analiz/restart_celery.sh` scripti oluşturuldu — `pkill -9 -f` ile tüm grubu öldürür
 
+#### Bug Fix: Zamanlanmış bildirim yanlış veri gösteriyor (tasks.py)
+- [x] Kök neden: `send_daily_notifications` → `format_daily_notification()` → `_calculate_streak()` → `async_session_factory()` (asyncpg) Celery'nin `asyncio.run()` event loop'uyla çakışıyordu → streak verisi okunamıyor, tüm yakıtlar "Sabit" görünüyordu
+- [x] Çözüm: `_build_notification_message_sync()` — psycopg2 ile sync DB erişimi, streak hesabını doğrudan yapar
+- [x] `_send_notification_sync()` — kullanıcı listesini psycopg2 ile çeker, Telegram API çağrısını asyncio.run() ile yapar (DB yok)
+- [x] Test: Sunucuda `_build_notification_message_sync()` çalıştırıldı → `/rapor` ile tutarlı sonuç (Benzin: %33 Zam Olasılığı)
+
 ### Sonuç
-3 bug düzeltildi. MBE benzin/motorin 0.776→0.0, risk 0.276→0.006 (fiyat değişimi doğru yansıtıldı). Çift bildirim sorunu çözüldü.
+4 bug düzeltildi. MBE benzin/motorin 0.776→0.0, risk 0.276→0.006 (fiyat değişimi doğru yansıtıldı). Çift bildirim sorunu çözüldü. Zamanlanmış bildirimler artık /rapor ile tutarlı veri gösteriyor.
