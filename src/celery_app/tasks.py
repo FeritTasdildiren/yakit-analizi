@@ -452,38 +452,22 @@ def send_daily_notifications(self):
     """
     Onaylı Telegram kullanıcılarına günlük bildirim gönder.
 
-    Zamanlama: Her gün 10:00 TSİ (İstanbul saati)
+    Zamanlama: Her gün 11:00 TSİ (İstanbul saati)
     Retry: 2 deneme, 1 dakika aralıkla.
+
+    Sync psycopg2 ile mesaj oluşturur, asyncpg event loop
+    çakışmasını önlemek için async_session_factory kullanmaz.
     """
     logger.info("Günlük bildirim gönderme başlıyor...")
 
     try:
-        result = asyncio.run(_send_notifications())
+        message_text = _build_notification_message_sync()
+        result = _send_notification_sync(message_text)
         logger.info("Bildirim gönderme tamamlandı: %s", result)
         return result
     except Exception as exc:
         logger.exception("Bildirim gönderme hatası: %s", exc)
         raise self.retry(exc=exc)
-
-
-async def _send_notifications() -> dict:
-    """Tüm aktif+onaylı kullanıcılara bildirim gönder."""
-    try:
-        from src.telegram.notifications import (
-            send_daily_notifications as _send,
-        )
-
-        result = await _send()
-        return {"status": "sent", "details": result}
-    except ImportError:
-        logger.warning(
-            "Telegram modülü henüz mevcut değil. Bildirim atlanıyor."
-        )
-        return {"status": "skipped", "reason": "telegram_module_not_found"}
-    except Exception as exc:
-        logger.warning("Bildirim gönderim hatası: %s", exc)
-        return {"status": "error", "reason": str(exc)}
-
 
 
 # ── Task 3b: Akşam Bildirim Gönderme ────────────────────────────────────────
@@ -495,18 +479,158 @@ def send_evening_notifications(self):
     Onaylı Telegram kullanıcılarına akşam bildirim gönder.
 
     Zamanlama: Her gün 18:45 TSİ (akşam pipeline tamamlandıktan sonra)
-    Aynı bildirim mantığını kullanır (sabahla aynı _send_notifications).
     Retry: 2 deneme, 1 dakika aralıkla.
     """
     logger.info("Akşam bildirim gönderme başlıyor...")
 
     try:
-        result = asyncio.run(_send_notifications())
+        message_text = _build_notification_message_sync()
+        result = _send_notification_sync(message_text)
         logger.info("Akşam bildirim gönderme tamamlandı: %s", result)
         return result
     except Exception as exc:
         logger.exception("Akşam bildirim gönderme hatası: %s", exc)
         raise self.retry(exc=exc)
+
+
+def _build_notification_message_sync() -> str:
+    """
+    Bildirim mesajını psycopg2 ile sync oluşturur.
+
+    asyncpg event loop çakışmasını önlemek için async_session_factory
+    yerine doğrudan psycopg2 kullanır. handlers.py'deki
+    format_daily_notification() ile aynı formatı üretir.
+    """
+    import psycopg2
+
+    DB_URL = settings.sync_database_url
+    MONTHS_TR = {
+        1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan",
+        5: "Mayıs", 6: "Haziran", 7: "Temmuz", 8: "Ağustos",
+        9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık",
+    }
+
+    today = date.today()
+    date_str = f"{today.day} {MONTHS_TR[today.month]}"
+    lines = [f"🔔 Günlük Rapor — {date_str}\n"]
+
+    short_labels = {"benzin": "Benzin", "motorin": "Motorin", "lpg": "LPG"}
+
+    conn = psycopg2.connect(DB_URL)
+    try:
+        cur = conn.cursor()
+        for fuel_type, label in short_labels.items():
+            # Streak hesapla — predictions_v5'ten son 10 günü çek
+            cur.execute(
+                "SELECT run_date, first_event_type, first_event_amount "
+                "FROM predictions_v5 "
+                "WHERE fuel_type = %s "
+                "ORDER BY run_date DESC LIMIT 10",
+                (fuel_type,)
+            )
+            rows = cur.fetchall()
+
+            streak_count = 0
+            streak_direction = None
+            latest_amount = 0.0
+
+            if rows:
+                for row in rows:
+                    event_type = row[1] or None
+                    amount = float(row[2] or 0)
+
+                    if event_type is None or amount == 0.0:
+                        break
+
+                    if streak_direction is None:
+                        streak_direction = event_type
+                        streak_count = 1
+                        latest_amount = abs(amount)
+                        continue
+
+                    if event_type == streak_direction:
+                        streak_count += 1
+                    else:
+                        break
+
+            # Format — handlers.py ile aynı mantık
+            if streak_count == 0 or streak_direction is None:
+                lines.append(f"⛽ {label}: Sabit ✅")
+            else:
+                # streak_to_probability
+                if streak_count == 1:
+                    probability = 33
+                elif streak_count == 2:
+                    probability = 66
+                else:
+                    probability = 99
+
+                if streak_direction == "artis":
+                    lines.append(
+                        f"⛽ {label}: 🔴 %{probability} Zam Olasılığı "
+                        f"(~{latest_amount:.2f} TL)"
+                    )
+                else:
+                    lines.append(
+                        f"⛽ {label}: 🟢 %{probability} İndirim Olasılığı "
+                        f"(~{latest_amount:.2f} TL)"
+                    )
+
+        cur.close()
+    finally:
+        conn.close()
+
+    lines.append("\nDetay → /rapor")
+    return "\n".join(lines)
+
+
+def _send_notification_sync(message_text: str) -> dict:
+    """
+    Mesajı tüm aktif+onaylı kullanıcılara gönderir.
+
+    Kullanıcı listesini psycopg2 ile çeker, mesaj gönderimini
+    asyncio.run() ile yapar (sadece Telegram API çağrısı, DB yok).
+    """
+    import psycopg2
+
+    from telegram import Bot
+
+    DB_URL = settings.sync_database_url
+
+    # Kullanıcı listesini sync çek
+    conn = psycopg2.connect(DB_URL)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT telegram_id FROM telegram_users "
+            "WHERE is_active = true AND is_approved = true"
+        )
+        user_ids = [row[0] for row in cur.fetchall()]
+        cur.close()
+    finally:
+        conn.close()
+
+    total = len(user_ids)
+    if total == 0:
+        logger.info("Bildirim gönderilecek kullanıcı yok")
+        return {"sent": 0, "failed": 0, "total": 0}
+
+    # Telegram mesaj gönderimi (async — DB kullanmaz, event loop sorunu yok)
+    async def _send_all():
+        bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+        sent = 0
+        failed = 0
+        for tid in user_ids:
+            try:
+                await bot.send_message(chat_id=tid, text=message_text)
+                sent += 1
+            except Exception as exc:
+                logger.warning("Mesaj gönderilemedi: tid=%s, hata=%s", tid, exc)
+                failed += 1
+            await asyncio.sleep(0.05)  # rate limit
+        return {"sent": sent, "failed": failed, "total": total}
+
+    return asyncio.run(_send_all())
 
 
 # ── Task 5: Günlük MBE Hesaplama ────────────────────────────────────────────
